@@ -1,0 +1,47 @@
+---
+title: "Method comparison plots"
+author: "Matt Ploenzke"
+date: "1/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Packages.
+```{r}
+library(tidyverse)
+library(ggrepel)
+library(magrittr)
+```
+
+Load estimated effect sizes from RNA.
+```{r}
+all_effect_sizes <- read_csv('~/Desktop/Concordance/results/CCLE_GDSC1000_CTRPv2_FIMM_gCSI_sensitivity_comparison_rna/all_effect_sizes.csv') %>%
+  mutate(Feature = 'RNA') %>%
+  bind_rows(read_csv('~/Desktop/Concordance/results/CCLE_GDSC1000_CTRPv2_FIMM_gCSI_sensitivity_comparison_mutation/all_effect_sizes.csv') %>%
+  mutate(Feature = 'Mutation')) %>%
+  bind_rows(read_csv('~/Desktop/Concordance/results/CCLE_GDSC1000_CTRPv2_FIMM_gCSI_sensitivity_comparison_cnv/all_effect_sizes.csv') %>%
+  mutate(Feature = 'CNV'))
+```
+
+Volcano plots.
+```{r}
+all_effect_sizes %>% 
+  filter(Measure == 'naive_v_cell_type') %>%
+  filter(Dataset != 'Joint') %>%
+  #filter(isKnown) %>%
+  #filter(symbol %in% c('ALK','JUN','PDGFRB','JUNB','NPM1','EML4','ROS1','MET','RAS','JAK3','STAT3','STAT5','AKT','MTOR',
+  #                     'BAD','ERK','IP3','MEK','ERK','PI3K','RPS6KB1','ABCB1','SLCO1B1','SLCO1B3','AOX1')) %>%
+  #filter(lit_type == 'rna') %>% 
+  select(-lit_type) %>% 
+  distinct() %>%
+  mutate(adj.P.Val = -log10(adj.P.Val)) %>%
+  mutate(symbol = case_when(adj.P.Val > .2 ~ symbol, TRUE ~ '')) %>%
+  ggplot(aes(x=logFC,y=adj.P.Val)) + 
+  geom_point(aes(color=isKnown)) +
+  geom_text_repel(aes(label=symbol)) + 
+  theme_bw() + 
+  facet_grid(cols=vars(Feature), rows=vars(Dataset), scales='free')
+```

@@ -1,0 +1,719 @@
+---
+title: "Untitled"
+author: "Matt Ploenzke"
+date: "3/5/2020"
+output: html_document
+---
+
+Packages.
+```{r}
+library(tidyverse)
+library(cowplot)
+library(viridis)
+```
+
+Name fixes.
+```{r}
+name_fixes <- list("gw-843682x" = "BRD-K90382497", "jq1-(+)" = "BRD-K54606188", "sb-525334" = "BRD-K37720887", 
+                   "nutlin-3" = "BRD-A12230535", "fk-866" = "BRD-K58550667", 'cisplatin' = "BRD-K69172251", 
+                   "tipifarnib" = "BRD-K62965247","jq1-(+)" = "BRD-K54606188","idelalisib" = "BRD-K60866521",
+                   "i-bet-762" = "BRD-K08109215","zstk-474" = "BRD-K63068307","5-fluorouracil" = "BRD-K24844714",
+                   "mitomycin-c" = "BRD-A48237631","fk-866" = "BRD-K58550667","tozasertib" = "BRD-K59369769",
+                   'cisplatin' = "BRD-K69172251","gw-843682x" = "BRD-K90382497","tipifarnib" = "BRD-K62965247",
+                   "jq1-(+)" = "BRD-K54606188","idelalisib" = "BRD-K60866521","i-bet-762" = "BRD-K08109215",
+                   "sb-525334" = "BRD-K37720887","zstk-474" = "BRD-K63068307","nutlin-3" = "BRD-A12230535",
+                   "5-fluorouracil" = "BRD-K24844714","mitomycin-c" = "BRD-A48237631","fk-866" = "BRD-K58550667",
+                   "tozasertib" = "BRD-K59369769")
+```
+
+Load prism.
+```{r}
+prism <- read.csv(file.path("~/Desktop/Concordance/PSets/prism/secondary-screen-dose-response-curve-parameters.csv"), stringsAsFactors=FALSE) %>% 
+  as_tibble() %>%
+  select(broad_id, depmap_id, ccle_name, screen_id, name, moa, target, disease.area, auc, row_name, passed_str_profiling) %>% 
+  mutate(name = tolower(name))
+for (nname in 1:length(name_fixes)) {
+  prism <- prism %>%
+    mutate(name = case_when(broad_id == name_fixes[nname] ~ names(name_fixes)[nname],
+                            TRUE ~ name))
+}
+```
+
+Cell line name concordance.
+```{r}
+cell_concordance <- prism %>%
+  distinct(ccle_name, row_name)
+cell_concordance2 <- cell_concordance %>%
+  separate(ccle_name, into=c('ccle','tissue'),extra='merge')
+
+drug_concordance <- prism %>%
+  distinct(broad_id, name)
+
+rm(prism)
+```
+
+Load intersection posterior.
+```{r}
+intersection.fitted.list <- readRDS('~/Desktop/Concordance/results/PRISM_GDSC_CTRP_fit/intersection.fitted.list.RDS')
+#intersection.fitted.list <- readRDS('~/Desktop/Concordance/results/PRISM_GDSC_CTRP_fit_overlap/intersection.fitted.list.RDS')
+```
+
+Load posterior information for all cells/drugs/experiments.
+```{r}
+posterior.formatted <- readRDS('~/Desktop/Concordance/results/PRISM_GDSC_CTRP_fit/posterior.formatted.RDS')
+posterior.overlap <- readRDS('~/Desktop/Concordance/results/PRISM_GDSC_CTRP_fit_overlap/posterior.formatted.RDS') %>% separate(cell, into=c('cell','num'))
+
+joined <-posterior.formatted %>% 
+  filter(drug %in% unique(posterior.overlap$drug)) %>%
+  left_join(cell_concordance2, by=c('cell' = 'row_name')) %>%
+  mutate(cell = ccle) %>%
+  select(drug, cell, experiment, realized_value) %>%
+  rename(original_value = realized_value) %>%
+  right_join(posterior.overlap %>% select(drug, cell ,experiment, realized_value), by=c('cell','drug','experiment'))
+```
+
+Plot of realized value versus recomputed for each drug.
+```{r}
+joined %>%
+  filter(drug=='paclitaxel') %>%
+  mutate(color=case_when(original_value<1e-2 & realized_value>1e-2 ~ 'red',TRUE~'grey')) %>%
+  ggplot(aes(x=original_value, y=realized_value)) + 
+  geom_point(alpha=.5) + 
+  theme_bw() + 
+  geom_abline(aes(slope=1,intercept=0),lty=2) +
+  facet_wrap(vars(experiment))
+```
+
+Comparison between AAC and probability sensitive.
+```{r}
+dir.create('AAC_v_posterior', showWarnings = FALSE)
+drugss <- posterior.formatted %>% 
+  distinct(drug) %>% 
+  pull()
+#drugss <- 'nilotinib'
+for (dr in drugss) {
+  p <- posterior.formatted %>%
+    filter(drug == dr) %>% 
+    ggplot(aes(x=realized_value, y=posterior_probability_sensitive)) + 
+    geom_point() + 
+    theme_bw() + 
+    facet_grid(cols=vars(experiment)) +
+    labs(title = paste(posterior.formatted %>%
+    filter(drug == dr) %>% distinct(drug_type) %>% pull(),collapse = '_'))
+  dr <- gsub("[[:punct:]]",'',dr)
+  ggsave(plot=p, filename=paste('AAC_v_posterior/',dr,'.png',sep=''),width=12,height=5,units='in')
+}
+```
+
+Two-way plots with and without zeros (raw AAC and posterior).
+```{r}
+dir.create('twoway_plots', showWarnings=FALSE)
+for (comp in names(intersection.fitted.list)) {
+  tibb <- intersection.fitted.list[[comp]]
+  curr_studies <- strsplit(comp,'_')[[1]]
+  drugss <- tibb %>% distinct(drug) %>% pull()
+  for (dr in drugss) {
+    p1 <- tibb %>%
+      filter(drug == dr) %>% 
+      select(drug, cell, experiment, realized_value) %>%
+      spread(experiment, realized_value) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      ggplot(aes(x=v1, y=v2)) + 
+      geom_point() + 
+      geom_smooth(method='lm',se=FALSE) + 
+      theme_bw() +
+      lims(x=c(0,1),y=c(0,1)) + 
+      labs(x=curr_studies[1],y=curr_studies[2])
+    p2 <- tibb %>%
+      filter(drug == dr) %>%
+      filter(realized_value>1e-2) %>%
+      select(drug, cell, experiment, realized_value) %>%
+      spread(experiment, realized_value) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      ggplot(aes(x=v1, y=v2)) + 
+      geom_point() + 
+      geom_smooth(method='lm',se=FALSE) + 
+      theme_bw() +
+      lims(x=c(0,1),y=c(0,1)) + 
+      labs(x=curr_studies[1],y=curr_studies[2])
+    p3 <- tibb %>%
+      filter(drug == dr) %>% 
+      select(drug, cell, experiment, posterior_probability_sensitive) %>%
+      spread(experiment, posterior_probability_sensitive) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      ggplot(aes(x=v1, y=v2)) + 
+      geom_point() + 
+      geom_smooth(method='lm',se=FALSE) + 
+      theme_bw() +
+      lims(x=c(0,1),y=c(0,1)) + 
+      labs(x=curr_studies[1],y=curr_studies[2])
+    p4 <- tibb %>%
+      filter(drug == dr) %>% 
+      filter(realized_value>1e-2) %>%
+      select(drug, cell, experiment, posterior_probability_sensitive) %>%
+      spread(experiment, posterior_probability_sensitive) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      ggplot(aes(x=v1, y=v2)) + 
+      geom_point() + 
+      geom_smooth(method='lm',se=FALSE) + 
+      theme_bw() +
+      lims(x=c(0,1),y=c(0,1)) + 
+      labs(x=curr_studies[1],y=curr_studies[2])
+    pp <- try(plot_grid(p1, p2, p3, p4, labels = c('A', 'B','C','D'), label_size = 12, nrow=2),silent=TRUE)
+    if (class(pp) != 'try-error') {
+      ggsave(plot=pp, filename=paste('twoway_plots/',dr,'_',comp,'.png',sep=''),width=12,height=12,units='in')
+    }
+  }
+}
+```
+
+Two-way plot of a single drug.
+```{r}
+tdat <- lapply(names(intersection.fitted.list), function(jj) {
+  intersection.fitted.list[[jj]] %>%
+    mutate(comparison = jj)
+})
+dr <- 'saracatinib'
+dr <- 'bexarotene'
+do.call(bind_rows,tdat) %>%
+  filter(drug==dr) %>%
+  #filter(realized_value>1e-2) %>%
+  separate(comparison, into=c('comp1','comp2'),sep='_') %>%
+  mutate(experiment = case_when(experiment==comp1 ~ 'comp1', 
+                                experiment==comp2 ~ 'comp2')) %>% 
+  unite(comparison, comp1, comp2) %>%
+  select(drug, cell, experiment, realized_value, comparison) %>%
+  spread(experiment, realized_value) %>% 
+  ggplot(aes(x=comp1,y=comp2)) + 
+  geom_point(alpha=.5) +
+  facet_grid(cols=vars(comparison)) + 
+  theme_bw() + 
+  geom_smooth(method='lm',se=FALSE) + 
+  scale_color_viridis_d()
+
+
+p1 <- intersection.fitted.list[[1]] %>%
+  filter(drug==dr) %>% 
+  #filter(realized_value>1e-2) %>%
+  select(drug, cell, experiment, realized_value) %>%
+  spread(experiment, realized_value) %>%
+  ggplot(aes(y=PRISM, x=CTRP)) + 
+  geom_point(alpha=.5) + 
+  theme_bw() +
+  geom_smooth(method='lm',se=FALSE) +
+  lims(y=c(0,1), x=c(0,1)) +
+  theme(panel.grid = element_blank())
+p2 <- intersection.fitted.list[[2]] %>%
+  #filter(realized_value>1e-2) %>%
+  filter(drug==dr) %>% 
+  select(drug, cell, experiment, realized_value) %>%
+  spread(experiment, realized_value) %>%
+  ggplot(aes(y=PRISM, x=GDSC)) + 
+  geom_point(alpha=.5) + 
+  theme_bw() +
+  geom_smooth(method='lm',se=FALSE) +
+  lims(y=c(0,1), x=c(0,1)) +
+  theme(panel.grid = element_blank())
+p3 <- intersection.fitted.list[[3]] %>%
+  filter(drug==dr) %>% 
+  #filter(realized_value>1e-2) %>%
+  select(drug, cell, experiment, realized_value) %>%
+  spread(experiment, realized_value) %>%
+  ggplot(aes(x=CTRP, GDSC)) + 
+  geom_point(alpha=.5) + 
+  theme_bw() +
+  geom_smooth(method='lm',se=FALSE) +
+  lims(y=c(0,1), x=c(0,1)) +
+  theme(panel.grid = element_blank())
+pp <- plot_grid(p3, p1, p2, labels = c('A', 'B','C'), label_size = 12, nrow=1)
+ggsave(pp, file='temp.png',width=12,height=3,units='in')
+```
+
+Calculate pearson correlation and MCC.
+```{r}
+twoway_agreement <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  tibb <- intersection.fitted.list[[comp]]
+  curr_studies <- strsplit(comp,'_')[[1]]
+  pearson <- tibb %>% 
+    select(drug, cell, realized_value, experiment) %>%
+    spread(experiment, realized_value) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson = cor(v1,v2,method='pearson'),
+              pearson_se = sqrt((1-pearson)/(n()-2))) %>%
+    ungroup()
+  pearson_posterior <- tibb %>% 
+    select(drug, cell, posterior_probability_sensitive, experiment) %>%
+    spread(experiment, posterior_probability_sensitive) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson_posterior = cor(v1,v2,method='pearson'),
+              pearson_posterior_se = sqrt((1-pearson_posterior)/(n()-2))) %>%
+    ungroup()
+  drug_types <- tibb %>%
+    select(drug, drug_type, experiment) %>%
+    distinct() %>%
+    spread(experiment, drug_type) %>%
+    rename(v1_dt = curr_studies[1], v2_dt = curr_studies[2])
+  mcc <- tibb %>% 
+    select(drug, cell, cell_type, experiment) %>%
+    spread(experiment, cell_type) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    left_join(drug_types, by='drug') %>%
+    group_by(drug) %>% 
+    mutate(Drug_type = case_when((v1_dt=='broad' & v2_dt=='broad') ~ 'Broad',
+                                 (v1_dt=='targeted' & v2_dt=='targeted') ~ 'Targeted',
+                                 TRUE ~ 'Disagree')) %>%
+    select(-v1_dt, -v2_dt) %>%
+    summarise(Drug_type = first(Drug_type),
+                   t00 = sum(v1=='resistant' & v2=='resistant'),
+                   t11 = sum(v1=='sensitive' & v2=='sensitive'),
+                   t01 = sum(v1=='resistant' & v2=='sensitive'),
+                   t10 = sum(v1=='sensitive' & v2=='resistant')) %>%
+         mutate(t00 = pmax(t00,.5),
+                t11 = pmax(t11,.5),
+                t10 = pmax(t10,.5),
+                t01 = pmax(t01,.5)) %>% 
+         ungroup() %>%
+         mutate(LOR = log((t00*t11)/(t01*t10)),
+                SE_LOR = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
+                MCC = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) 
+  twoway_agreement <- pearson %>% 
+    left_join(mcc, by='drug') %>% 
+    left_join(pearson_posterior, by='drug') %>% 
+    mutate(comparison = comp) %>% 
+    bind_rows(twoway_agreement)
+}
+```
+
+Same thing but no zeros included.
+```{r}
+twoway_agreement_nozeros <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  tibb <- intersection.fitted.list[[comp]]
+  curr_studies <- strsplit(comp,'_')[[1]]
+  pearson <- tibb %>% 
+    select(drug, cell, realized_value, experiment) %>%
+    filter(realized_value>=1e-2) %>%
+    spread(experiment, realized_value) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson = cor(v1,v2,method='pearson'),
+              pearson_se = sqrt((1-pearson)/(n()-2))) %>%
+    ungroup()
+  pearson_posterior <- tibb %>% 
+    filter(realized_value>=1e-2) %>%
+    select(drug, cell, posterior_probability_sensitive, experiment) %>%
+    spread(experiment, posterior_probability_sensitive) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson_posterior = cor(v1,v2,method='pearson'),
+              pearson_posterior_se = sqrt((1-pearson_posterior)/(n()-2))) %>%
+    ungroup()
+  drug_types <- tibb %>%
+    select(drug, drug_type, experiment) %>%
+    distinct() %>%
+    spread(experiment, drug_type) %>%
+    rename(v1_dt = curr_studies[1], v2_dt = curr_studies[2])
+  mcc <- tibb %>% 
+    filter(realized_value>=1e-2) %>%
+    select(drug, cell, cell_type, experiment) %>%
+    spread(experiment, cell_type) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    left_join(drug_types, by='drug') %>%
+    group_by(drug) %>% 
+    mutate(Drug_type = case_when((v1_dt=='broad' & v2_dt=='broad') ~ 'Broad',
+                                 (v1_dt=='targeted' & v2_dt=='targeted') ~ 'Targeted',
+                                 TRUE ~ 'Disagree')) %>%
+    select(-v1_dt, -v2_dt) %>%
+    summarise(Drug_type = first(Drug_type),
+                   t00 = sum(v1=='resistant' & v2=='resistant'),
+                   t11 = sum(v1=='sensitive' & v2=='sensitive'),
+                   t01 = sum(v1=='resistant' & v2=='sensitive'),
+                   t10 = sum(v1=='sensitive' & v2=='resistant')) %>%
+         mutate(t00 = pmax(t00,.5),
+                t11 = pmax(t11,.5),
+                t10 = pmax(t10,.5),
+                t01 = pmax(t01,.5)) %>% 
+         ungroup() %>%
+         mutate(LOR = log((t00*t11)/(t01*t10)),
+                SE_LOR = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
+                MCC = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) 
+  twoway_agreement_nozeros <- pearson %>% 
+    left_join(mcc, by='drug') %>% 
+    left_join(pearson_posterior, by='drug') %>% 
+    mutate(comparison = comp) %>% 
+    bind_rows(twoway_agreement_nozeros)
+}
+```
+
+Reproduce extended data fig 8 from prism paper.
+```{r}
+twoway_agreement %>% 
+  filter(comparison == 'CTRP_PRISM') %>%
+  bind_rows(twoway_agreement %>% 
+              filter(comparison == 'CTRP_GDSC')) %>%
+  mutate(facett = 'GDSC') %>%
+  bind_rows(twoway_agreement %>%  
+              filter(comparison == 'GDSC_PRISM') %>% 
+              bind_rows(twoway_agreement %>%
+                          filter(comparison == 'CTRP_GDSC')) %>%
+              mutate(facett = 'CTRP')) %>%
+  mutate(drug = factor(drug, levels=twoway_agreement %>% 
+                        filter(comparison=='CTRP_GDSC') %>% 
+                        arrange(pearson) %>% 
+                        pull(drug))) %>%
+  ggplot(aes(x=drug, y=pearson, color=comparison)) + 
+  geom_hline(aes(yintercept=0),lty=1,color='grey') + 
+  geom_hline(aes(yintercept=.5),lty=1,color='grey') + 
+  geom_hline(aes(yintercept=1),lty=1,color='grey') + 
+  geom_hline(aes(yintercept=-.5),lty=1,color='grey') + 
+  geom_point(alpha=.75) + 
+  geom_linerange(aes(ymin = pmax(pearson - 1.96*pearson_se,-.5), ymax = pmin(pearson + 1.96*pearson_se,1)),alpha=.75) +
+  theme_bw() + 
+  theme(axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.ticks.x = element_blank()) + 
+  scale_color_manual(values=c('dodgerblue4','firebrick2','firebrick2')) + 
+  lims(y=c(-.5,1)) + 
+  labs(y='Pearson correlation', x='') +
+  facet_grid(rows=vars(facett))
+ggsave('test.png',width=12,height=8,units='in')
+```
+
+Plot two-way agreement for all drugs of pearson correlation for each comparison.
+```{r}
+twoway_agreement %>% 
+  mutate(hasZeros = TRUE) %>%
+  #bind_rows(twoway_agreement_nozeros %>%
+  #            mutate(hasZeros = FALSE)) %>%
+  select(drug, pearson, comparison, hasZeros) %>%
+  spread(comparison, pearson) %>%
+  ggplot(aes(x=CTRP_GDSC, y=CTRP_PRISM)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(alpha=.75) + 
+  theme_bw() + 
+  scale_color_viridis(discrete=TRUE) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  theme(panel.grid = element_blank())
+ggsave('temp.png',width=4,height=4,units='in')
+```
+
+Boxplot of these comparisons.
+```{r}
+library(ggpubr)
+my_comparisons <- list( c("CTRP_PRISM", "CTRP_GDSC"),c("GDSC_PRISM", "CTRP_GDSC"),c("CTRP_PRISM", "GDSC_PRISM"))
+ggboxplot(twoway_agreement, 
+  x = "comparison", y = "pearson", color='comparison',palette = "jco",
+  ylab = '', xlab='Dataset', 
+  title='Pearson correlation',
+  subtitle='Restricted to cells/drugs present in all three studiess',
+  legend='none',
+  width=.5)+ 
+  stat_compare_means(comparisons = my_comparisons)
+ggsave('temp.png',width=6,height=6,units='in')
+```
+
+Plot two-way agreements for all drugs.
+```{r}
+library(ggrepel)
+twoway_agreement %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  mutate(color = case_when(drug == 'nilotinib' ~ 'red', TRUE ~ '')) %>% 
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(alpha=.75) + 
+  theme_bw() + 
+  facet_grid(cols=vars(comparison)) + 
+  scale_color_viridis(discrete=TRUE) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity for all drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank())
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Same thing with no zeros.
+```{r}
+twoway_agreement_nozeros %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(alpha=.75) + 
+  theme_bw() + 
+  facet_grid(cols=vars(comparison)) + 
+  scale_color_viridis(discrete=TRUE) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity for all drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank())
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Comparison of with and without zeros.
+```{r}
+twoway_agreement %>% 
+  select(drug, pearson, Drug_type, pearson_posterior, MCC, comparison) %>%
+  left_join(twoway_agreement_nozeros %>%
+              select(drug,pearson, Drug_type, pearson_posterior, MCC, comparison) %>%
+              rename(pearson_nozeros=pearson, 
+                     pearson_posterior_nozeros = pearson_posterior,
+                     MCC_nozeros = MCC),
+            by=c('drug','Drug_type','comparison')) %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(posterior_nozeros = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior_nozeros,
+                               Drug_type %in% c('Targeted') ~ MCC_nozeros)) %>%
+  filter(Drug_type == 'Targeted') %>%
+  ggplot(aes(x=posterior, y=posterior_nozeros)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(aes(color=Drug_type), alpha=.75) +
+  #geom_point(alpha=.75) + 
+  theme_bw() + 
+  facet_grid(cols=vars(comparison)) + 
+  scale_color_viridis(discrete=TRUE) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  labs(x='All values included',y='Only values > 0 included') + 
+  theme(panel.grid = element_blank())
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Plot two-way agreements for targeted drugs only.
+```{r}
+twoway_agreement %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  mutate(color = case_when(drug == 'bexarotene' ~ 'red', TRUE ~ '')) %>% 
+  filter(Drug_type=='Targeted') %>%
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(aes(color=color),alpha=.75) + 
+  #geom_point(alpha=.75) + 
+  #geom_text_repel(aes(label=Label)) + 
+  theme_bw() + 
+  #facet_grid(cols=vars(comparison), rows=vars(Drug_type)) +
+  facet_grid(cols=vars(comparison)) + 
+  scale_color_manual(values=c('grey','red')) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity for targeted drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank(),
+        legend.position='none')
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Same thing but without zeros.
+```{r}
+twoway_agreement_nozeros %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  mutate(color = case_when(drug == 'bexarotene' ~ 'red', TRUE ~ '')) %>% 
+  filter(Drug_type=='Targeted') %>%
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(aes(color=color),alpha=.75) + 
+  #geom_point(alpha=.75) + 
+  #geom_text_repel(aes(label=Label)) + 
+  theme_bw() + 
+  #facet_grid(cols=vars(comparison), rows=vars(Drug_type)) +
+  facet_grid(cols=vars(comparison)) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  scale_color_manual(values=c('grey','red')) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity (zeros excluded) for targeted drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank(),legend.position='none')
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Plot two-way agreements for non-targeted drugs only.
+```{r}
+twoway_agreement %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  mutate(color = case_when(drug == 'azd6482' ~ 'red', TRUE ~ '')) %>% filter(color=='red')
+  filter(Drug_type!='Targeted') %>% 
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(aes(color=color),alpha=.75) + 
+  #geom_point(alpha=.75) + 
+  #geom_text_repel(aes(label=Label)) + 
+  theme_bw() + 
+  #facet_grid(cols=vars(comparison), rows=vars(Drug_type)) +
+  facet_grid(cols=vars(comparison)) + 
+  scale_color_manual(values=c('grey','red')) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity for broad effect drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank(),
+        legend.position='none')
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Same thing but without zeros.
+```{r}
+twoway_agreement_nozeros %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  mutate(Correlation = case_when(Drug_type %in% c('Broad','Disagree') ~ 'Pearson',
+                               Drug_type %in% c('Targeted') ~ 'Matthews')) %>%
+  mutate(Label = case_when(pearson<0 & posterior>0 ~ drug,
+                           pearson>0 & posterior<0 ~ drug,
+                           pearson<0 & posterior<0 ~ drug,
+                           TRUE ~ '')) %>%
+  mutate(color = case_when(drug == 'bexarotene' ~ 'red', TRUE ~ '')) %>% 
+  filter(Drug_type!='Targeted') %>%
+  ggplot(aes(x=pearson, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(aes(color=color),alpha=.75) + 
+  #geom_point(alpha=.75) + 
+  #geom_text_repel(aes(label=Label)) + 
+  theme_bw() + 
+  #facet_grid(cols=vars(comparison), rows=vars(Drug_type)) +
+  facet_grid(cols=vars(comparison)) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  scale_color_manual(values=c('grey','red')) + 
+  labs(x='Original',y='My method',
+       title='Agreement between drug sensitivity (zeros excluded) for targeted drugs',
+       subtitle = 'Only cells/drugs present in all three studies considered') + 
+  theme(panel.grid = element_blank(),legend.position='none')
+ggsave('temp.png',width=12,height=4,units='in')
+```
+
+Boxplot of agreements.
+```{r}
+library(ggpubr)
+my_comparisons <- list( c("CTRP PRISM", "CTRP GDSC"), c("CTRP PRISM", "GDSC PRISM"), c("CTRP GDSC", "GDSC PRISM") )
+ggboxplot(twoway_agreement %>%
+            mutate(zeros = 'Zeros included') %>%
+            bind_rows(twoway_agreement_nozeros %>%
+                        mutate(zeros = 'Zeros excluded')) %>%
+  mutate(posterior = case_when(Drug_type %in% c('Broad','Disagree') ~ pearson_posterior,
+                               Drug_type %in% c('Targeted') ~ MCC)) %>%
+  filter(Drug_type %in% c('Broad','Disagree')) %>%
+  filter(zeros == 'Zeros included') %>%
+  #filter(zeros == 'Zeros excluded') %>%
+  select(drug, pearson, posterior, comparison, zeros) %>%
+  gather('Method','Correlation', pearson, posterior) %>%
+  mutate(Method = case_when(Method=='pearson' ~ 'Raw AAC',
+                            TRUE ~ 'My method'),
+         comparison = gsub('_',' ',comparison)), 
+  x = "comparison", y = "Correlation", color='comparison',palette = "jco",
+  ylab = 'Correlation', xlab='Pairwise comparison', facet.by = c('Method'),
+  legend='top',
+  width=.5)+ 
+  stat_compare_means(comparisons = my_comparisons) + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  labs(color='')
+ggsave('temp.png',width=8,height=6,units='in')
+```
+
+Compare proportion of zeros per drug.
+```{r}
+mean_variance <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  mean_variance <- intersection.fitted.list[[comp]] %>%
+    group_by(drug, experiment, drug_type) %>%
+    summarise(prop_zero = mean(realized_value<=1e-2)) %>%
+    ungroup() %>%
+    mutate(comparison = comp) %>%
+    bind_rows(mean_variance)
+}
+
+mean_variance %>%  
+  select(drug, experiment, prop_zero) %>%
+  ggplot(aes(x=experiment,y=prop_zero)) + 
+  geom_boxplot(width=.5) +
+  theme_bw() +
+  labs(y='', title='Proportion of cells exhibiting no/negative response per drug',
+       subtitle='Restricted to cells/drugs present in all three studiess')
+
+my_comparisons <- list( c("CTRP", "PRISM"), c("CTRP", "GDSC"), c("GDSC", "PRISM") )
+ggboxplot(mean_variance %>% 
+  select(drug, experiment, prop_zero) %>%
+    mutate(experiment = factor(experiment,levels=c('GDSC','CTRP','PRISM'))), 
+  x = "experiment", y = "prop_zero", color='experiment',palette = "jco",
+  ylab = '', xlab='Dataset', 
+  title='Proportion of cells exhibiting no/negative response per drug',
+  subtitle='Restricted to cells/drugs present in all three studiess',
+  legend='none',
+  width=.5)+ 
+  stat_compare_means(comparisons = my_comparisons)
+ggsave('temp.png',width=6,height=6,units='in')
+```
+
+Correlation between proportion zeros and drug-drug correlation.
+```{r}
+mean_variance %>% 
+  select(-drug_type) %>%
+  left_join(twoway_agreement, by=c('drug','comparison')) %>%
+  filter(Drug_type!='Targeted') %>%
+  ggplot(aes(x=prop_zero, y=pearson, fill=experiment)) +
+  geom_point(alpha=.5,shape=21) + 
+  theme_bw() + 
+  stat_smooth(aes(color=experiment),method='loess',se=FALSE) + 
+  facet_grid(cols=vars(comparison))
+  ggsave('temp.png',width=12,height=6,units='in')
+```
+

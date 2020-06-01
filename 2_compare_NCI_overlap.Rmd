@@ -1,0 +1,843 @@
+---
+title: "Untitled"
+author: "Matt Ploenzke"
+date: "5/8/2020"
+output: html_document
+---
+
+Packages.
+```{r}
+library(tidyverse)
+library(cowplot)
+library(viridis)
+theme_set(theme_bw())
+```
+
+Load intersection posterior.
+```{r}
+intersection.fitted.list <- readRDS('~/Desktop/Concordance/results/CTRP_GDSC_NCI60_fit/intersection.fitted.list.RDS')
+```
+
+Load posterior information for all cells/drugs/experiments.
+```{r}
+posterior.formatted <- readRDS('~/Desktop/Concordance/results/CTRP_GDSC_NCI60_fit/posterior.formatted.RDS')
+```
+
+Calculate correlations.
+```{r}
+twoway_agreement <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  tibb <- intersection.fitted.list[[comp]]
+  curr_studies <- strsplit(comp,'_')[[1]]
+  pearson <- tibb %>% 
+    filter(drug_type=='broad') %>%
+    select(drug, cell, realized_value, experiment) %>%
+    spread(experiment, realized_value) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson_aac = cor(v1,v2,method='pearson'),
+              pearson_aac_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$se,
+              pearson_aac_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$p,
+              spearman_aac = cor(v1,v2,method='spearman'),
+              spearman_aac_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$se,
+              spearman_aac_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$p) %>%
+    ungroup()
+  pearson_posterior <- tibb %>% 
+    filter(drug_type=='broad') %>%
+    select(drug, cell, posterior_probability_sensitive, experiment) %>%
+    spread(experiment, posterior_probability_sensitive) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson_posterior = cor(v1,v2,method='pearson'),
+              pearson_posterior_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$se,
+              pearson_posterior_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$p,
+              spearman_posterior = cor(v1,v2,method='spearman'),
+              spearman_posterior_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$se,
+              spearman_posterior_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$p) %>%
+    ungroup()
+  drug_types <- tibb %>%
+    select(drug, drug_type, experiment, posterior_probability_targeted) %>%
+    distinct() %>%
+    filter((posterior_probability_targeted>.5 & drug_type=='targeted') | (posterior_probability_targeted<.5 & drug_type=='broad')) %>%
+    select(-drug_type) %>%
+    spread(experiment, posterior_probability_targeted) %>%
+    rename(study1_drugtype = curr_studies[1], study2_drugtype = curr_studies[2]) %>%
+    mutate(type = case_when(study1_drugtype*study2_drugtype > (1-study1_drugtype)*(1-study2_drugtype) ~ 'targeted',
+                            TRUE ~ 'broad')) %>%
+    select(drug, type)
+  mcc_counts_rounded <- tibb %>% 
+    filter(drug_type=='targeted') %>%
+    select(drug, cell, cell_type, experiment) %>%
+    spread(experiment, cell_type) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(t00 = sum(v1=='resistant' & v2=='resistant'),
+              t11 = sum(v1=='sensitive' & v2=='sensitive'),
+              t01 = sum(v1=='resistant' & v2=='sensitive'),
+              t10 = sum(v1=='sensitive' & v2=='resistant')) %>%
+       mutate(t00 = pmax(t00,.5),
+              t11 = pmax(t11,.5),
+              t10 = pmax(t10,.5),
+              t01 = pmax(t01,.5)) %>% 
+         ungroup() %>%
+         mutate(#lor_rounded = log((t00*t11)/(t01*t10)),
+                #lor_rounded_se = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
+                pearson_roundedcounts = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) %>%
+    select(drug, pearson_roundedcounts)
+  mcc_rounded <- tibb %>% 
+    filter(drug_type=='targeted') %>%
+    select(drug, cell, cell_type, experiment) %>%
+    spread(experiment, cell_type) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    mutate(v1 = as.numeric(v1=='sensitive'),
+           v2 = as.numeric(v2=='sensitive')) %>%
+    group_by(drug) %>%
+    summarise(pearson_celltype = cor(v1,v2,method='pearson'),
+              pearson_celltype_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$se,
+              pearson_celltype_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$p,
+              spearman_celltype = cor(v1,v2,method='spearman'),
+              spearman_celltype_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$se,
+              spearman_celltype_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$p) %>%
+    ungroup() %>%
+    select(drug, pearson_celltype, pearson_celltype_se, pearson_celltype_q, spearman_celltype, spearman_celltype_se, spearman_celltype_q)
+  mcc_soft <- tibb %>% 
+    filter(drug_type=='targeted') %>%
+    select(drug, cell, posterior_probability_sensitive, experiment) %>%
+    spread(experiment, posterior_probability_sensitive) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(pearson_soft = cor(v1,v2,method='pearson'),
+              pearson_soft_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$se,
+              pearson_soft_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$p,
+              spearman_soft = cor(v1,v2,method='spearman'),
+              spearman_soft_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$se,
+              spearman_soft_q = psych::corr.test(x=v1,y=v2,use='pairwise',method='spearman',adjust='fdr')$p) %>%
+    ungroup() %>%
+    select(drug, pearson_soft, pearson_soft_se, pearson_soft_q, spearman_soft, spearman_soft_se, spearman_soft_q)
+  mcc_counts_soft <- tibb %>% 
+    filter(drug_type=='targeted') %>%
+    select(drug, cell, posterior_probability_sensitive, experiment) %>%
+    spread(experiment, posterior_probability_sensitive) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(t00 = sum((1-v1)*(1-v2)),
+              t11 = sum(v1*v2),
+              t01 = sum((1-v1)*v2),
+              t10 = sum(v1*(1-v2))) %>%
+   mutate(t00 = pmax(t00,.5),
+          t11 = pmax(t11,.5),
+          t10 = pmax(t10,.5),
+          t01 = pmax(t01,.5)) %>% 
+    ungroup() %>%
+    mutate(#lor_soft = log((t00*t11)/(t01*t10)),
+           #lor_soft_se = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
+           pearson_softcounts = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) %>%
+    select(drug, pearson_softcounts)
+  twoway_agreement <- pearson %>% 
+    left_join(pearson_posterior, by='drug') %>% 
+    left_join(mcc_counts_rounded, by='drug') %>% 
+    left_join(mcc_counts_soft, by='drug') %>%
+    left_join(mcc_rounded, by='drug') %>%
+    left_join(mcc_soft, by='drug') %>%
+    left_join(drug_types, by='drug') %>%
+    mutate(comparison = comp) %>% 
+    bind_rows(twoway_agreement)
+}
+```
+
+Exploratory plot comparing correlation measures.
+```{r}
+library(ggrepel)
+twoway_agreement %>%
+  mutate(color = case_when(type == 'targeted' ~ 'D',
+                           TRUE ~ 'A')) %>%
+  ggplot(aes(x=pearson_aac, y=pearson_posterior)) +
+  geom_abline(aes(slope=1,intercept=0),lty=2) +
+  geom_text_repel(aes(label=drug)) +
+  geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position='none') +
+  scale_fill_viridis(discrete = TRUE,direction = -1) +
+  scale_x_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
+  scale_y_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
+  facet_wrap(vars(comparison),ncol=3)
+ggsave('temp.png',width=14,height=5,units='in')
+```
+
+Same things but with standard errors.
+```{r}
+twoway_agreement %>%
+  pivot_longer(-c('drug','type', 'comparison'), names_to='measure', values_to = 'value') %>% 
+  separate(measure, into=c('correlation','method','metric'),fill = 'right', remove=TRUE) %>%
+  replace_na(list(metric='estimate')) %>%
+  pivot_wider(names_from='metric',values_from='value') %>%
+  mutate(color = case_when(type == 'targeted' ~ 'red',
+                           TRUE ~ 'black')) %>%
+  mutate(drug=reorder(as.factor(drug),estimate)) %>%
+  filter(!(method %in% c('roundedcounts','softcounts'))) %>%
+  #filter(correlation !=  'spearman') %>%
+  filter(type == 'targeted', method %in% c('aac','soft', 'celltype')) %>%
+  ggplot(aes(x=drug, y=estimate, group=method, fill=method)) +
+  geom_hline(aes(yintercept=0),lty=2) +
+  geom_errorbar(aes(ymin=estimate-1.96*se, ymax=estimate+1.96*se),position=position_dodge(width=1)) +
+  geom_point(alpha=.5, size=4, shape=21,color='black',position=position_dodge(width=1)) + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position='top') +
+  scale_fill_viridis(discrete = TRUE,direction = -1) +
+  coord_flip() +
+  facet_grid(cols=vars(comparison),rows=vars(correlation))
+ggsave('temp.png',width=14,height=5,units='in')
+```
+
+Bootstrap.
+```{r}
+twoway_agreement_bootstrapped <- tibble()
+global_agreement <- tibble()
+for (ii in 1:1000) {
+  for (comp in names(intersection.fitted.list)) {
+    tibb <- intersection.fitted.list[[comp]]
+    curr_studies <- strsplit(comp,'_')[[1]]
+    pearson <- tibb %>%
+      filter(drug_type=='broad') %>%
+      select(drug, cell, realized_value, experiment) %>%
+      spread(experiment, realized_value) %>% 
+      na.omit() %>%
+      sample_n(size=n(),replace = TRUE) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      group_by(drug) %>%
+      summarise(pearson_aac = cor(v1,v2,method='pearson'),
+                pearson_aac_se = psych::corr.test(x=v1,y=v2,use='pairwise',method='pearson',adjust='fdr')$se,
+                pearson_aac_shuf = cor(sample(v1,n(),replace = FALSE),v2, method='pearson'),
+                spearman_aac = cor(v1,v2,method='spearman')) %>%
+      ungroup()
+    pearson_posterior <- tibb %>% 
+      filter(drug_type=='broad') %>%
+      select(drug, cell, posterior_probability_sensitive, experiment) %>%
+      spread(experiment, posterior_probability_sensitive) %>% 
+      na.omit() %>%
+      sample_n(size=n(),replace = TRUE) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      group_by(drug) %>%
+      summarise(pearson_posterior = cor(v1,v2,method='pearson'),
+                pearson_posterior_shuf = cor(sample(v1,n(),replace = FALSE),v2, method='pearson'),
+                spearman_posterior = cor(v1,v2,method='spearman')) %>%
+      ungroup()
+    drug_types <- tibb %>%
+      select(drug, drug_type, experiment, posterior_probability_targeted) %>%
+      distinct() %>%
+      #filter((posterior_probability_targeted>.5 & drug_type=='targeted') | (posterior_probability_targeted<.5 & drug_type=='broad')) %>%
+      filter(drug_type == 'targeted') %>%
+      select(-drug_type) %>%
+      group_by(drug) %>%
+      mutate(type = rbinom(1,1,sample(unique(posterior_probability_targeted),1))) %>%
+      mutate(type = case_when(type==1 ~ 'targeted', TRUE ~ 'broad')) %>%
+      ungroup() %>%
+      spread(experiment, posterior_probability_targeted) %>%
+      rename(study1_drugtype = curr_studies[1], study2_drugtype = curr_studies[2]) %>%
+      #mutate(type = case_when(study1_drugtype*study2_drugtype > (1-study1_drugtype)*(1-study2_drugtype) ~ 'targeted',
+      #                        TRUE ~ 'broad')) %>%
+      select(drug, type)
+     mcc_rounded <- tibb %>% 
+      filter(drug_type=='targeted') %>%
+      select(drug, cell, posterior_probability_sensitive, experiment) %>%
+      spread(experiment, posterior_probability_sensitive) %>% 
+      na.omit() %>%
+       sample_n(size=n(),replace = TRUE) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      mutate(v1 = rbinom(n(),1,v1),v2 = rbinom(n(),1,v2)) %>%
+      group_by(drug) %>%
+      mutate(t00 = sum(v1==0 & v2==0),
+              t11 = sum(v1==1 & v2==1),
+              t01 = sum(v1==0 & v2==1),
+              t10 = sum(v1==1 & v2==0)) %>%
+      group_by(drug, t11, t10, t01, t00) %>%
+      summarise(pearson_celltype = cor(v1,v2,method='pearson'),
+                pearson_celltype_shuf = cor(sample(v1,n(),replace = FALSE),v2, method='pearson'),
+                spearman_celltype = cor(v1,v2,method='spearman')) %>%
+      ungroup() %>%
+      mutate(pearson_celltype = case_when(is.na(pearson_celltype) & t01==0 & t10==0 ~ 1,
+                                                  is.na(pearson_celltype) & (t01!=0 | t10!=0) ~ 0,
+                                                  TRUE ~ pearson_celltype),
+             spearman_celltype = case_when(is.na(spearman_celltype) & t01==0 & t10==0 ~ 1,
+                                                  is.na(spearman_celltype) & (t01!=0 | t10!=0) ~ 0,
+                                                  TRUE ~ spearman_celltype)) %>%
+      select(drug, pearson_celltype, pearson_celltype_shuf, spearman_celltype)
+    mcc_soft <- tibb %>% 
+      filter(drug_type=='targeted') %>%
+      select(drug, cell, posterior_probability_sensitive, experiment) %>%
+      spread(experiment, posterior_probability_sensitive) %>% 
+      na.omit() %>%
+      sample_n(size=n(),replace = TRUE) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      group_by(drug) %>%
+      summarise(pearson_soft = cor(v1,v2,method='pearson'),
+                spearman_soft = cor(v1,v2,method='spearman')) %>%
+      ungroup() %>%
+      select(drug, pearson_soft, spearman_soft)
+    twoway_agreement_bootstrapped <- pearson %>% 
+      left_join(pearson_posterior, by='drug') %>% 
+      left_join(mcc_rounded, by='drug') %>%
+      left_join(mcc_soft, by='drug') %>%
+      left_join(drug_types, by='drug') %>%
+      mutate(comparison = comp, rep=ii) %>% 
+      bind_rows(twoway_agreement_bootstrapped)
+  }
+  tdat <- tibble()
+  for (comp in names(intersection.fitted.list)) {
+    tibb <- intersection.fitted.list[[comp]]
+    curr_studies <- strsplit(comp,'_')[[1]]
+    tdat <- tibb %>% 
+      group_by(drug) %>%
+      mutate(drug_type_sim = rbinom(1,1,sample(unique(posterior_probability_targeted),1))) %>%
+      ungroup()  %>%
+      filter((drug_type=='targeted' & drug_type_sim==1) | (drug_type=='broad' & drug_type_sim==0)) %>%
+      select(drug, cell, posterior_probability_sensitive, experiment,  drug_type) %>%
+      mutate(posterior_probability_sensitive =  case_when(drug_type=='targeted' ~ as.numeric(rbinom(n(),1,posterior_probability_sensitive)),
+                                                          TRUE ~ posterior_probability_sensitive)) %>%
+      select(-drug_type) %>%
+      spread(experiment, posterior_probability_sensitive) %>% 
+      na.omit() %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      mutate(v1 = rbinom(n(),1,v1),v2 = rbinom(n(),1,v2)) %>%
+      mutate(comparison = comp) %>%
+      bind_rows(tdat)
+  }
+  global_agreement <- tdat %>% 
+    mutate(v1 = as.numeric(v1),
+           v2 = as.numeric(v2)) %>%
+    mutate(unique_row_id = 1:n()) %>% #The rows need to be unique for `spread` to work.
+    mutate(dummy = 1) %>% 
+    spread(comparison, dummy, fill = 0) %>% 
+    group_by(drug) %>%
+    mutate(t00 = sum(v1==0 & v2==0),
+              t11 = sum(v1==1 & v2==1),
+              t01 = sum(v1==0 & v2==1),
+              t10 = sum(v1==1 & v2==0)) %>% 
+    group_by(drug, t11, t10, t01, t00) %>%
+    mutate(v3 = sample(v1,n(),replace=FALSE),
+           CTRP_GDSC2 = sample(CTRP_GDSC,n(),replace=FALSE),
+           CTRP_NCI602 = sample(CTRP_NCI60,n(),replace=FALSE),
+           GDSC_NCI602 = sample(GDSC_NCI60,n(),replace=FALSE)) %>%
+    do(global_corr = ppcor::pcor.test(.$v1,.$v2,.[,c('CTRP_GDSC','CTRP_NCI60','GDSC_NCI60')])$estimate,
+       global_corr_shuf = ppcor::pcor.test(.$v3,.$v2,.[,c('CTRP_GDSC2','CTRP_NCI602','GDSC_NCI602')])$estimate) %>%
+    ungroup() %>%
+   mutate(global_corr = unlist(global_corr),
+           global_corr_shuf = unlist(global_corr_shuf),
+           rep=ii) %>% 
+    mutate(global_corr = case_when(is.na(global_corr) & t01==0 & t10==0 ~ 1,
+                                                  is.na(global_corr) & (t01!=0 | t10!=0) ~ 0,
+                                                  TRUE ~ global_corr),
+             global_corr_shuf = case_when(is.na(global_corr_shuf) & t01==0 & t10==0 ~ 1,
+                                                  is.na(global_corr_shuf) & (t01!=0 | t10!=0) ~ 0,
+                                                  TRUE ~ global_corr_shuf)) %>%
+    select(-t00,-t11,-t01,-t10) %>%
+    bind_rows(global_agreement)
+}
+```
+
+Bootstrap drug types.
+```{r}
+drugs_agreement_bootstrapped <- tibble()
+for (ii in 1:1000) {
+  for (comp in names(intersection.fitted.list)) {
+    tibb <- intersection.fitted.list[[comp]]
+    curr_studies <- strsplit(comp,'_')[[1]]
+     drugs_agreement_bootstrapped <- tibb %>% 
+      distinct(drug, posterior_probability_targeted, experiment, drug_type) %>%
+      filter(drug_type == 'targeted') %>%
+      spread(experiment, posterior_probability_targeted) %>% 
+      na.omit() %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      mutate(v1 = rbinom(n(),1,v1),v2 = rbinom(n(),1,v2)) %>%
+      summarise(pearson_drugtype = cor(v1,v2,method='pearson'),
+                pearson_drugtype_shuf =  cor(sample(v1,n(),replace = FALSE),v2, method='pearson'),
+                spearman_drugtype = cor(v1,v2,method='spearman')) %>%
+      select(pearson_drugtype, pearson_drugtype_shuf, spearman_drugtype) %>%
+       mutate(rep = ii, comparison = comp) %>%
+       bind_rows(drugs_agreement_bootstrapped)
+  }
+}
+library(ggpubr)
+library(ggsci)
+my_colors <- list("CTRP and GDSC"="#767676FF", 'CTRP and NCI60'="#800000FF", "GDSC and NCI60"="#FFA319FF")
+my_comparisons <- list( c("CTRP and NCI60", "CTRP and GDSC"),c("GDSC and NCI60", "CTRP and GDSC"),c("CTRP and NCI60", "GDSC and NCI60"))
+ggerrorplot(drugs_agreement_bootstrapped %>% 
+  mutate(comparison = gsub('_',' and ',comparison)) %>% 
+  mutate(comparison = factor(comparison, levels=names(my_colors))), 
+  x = "comparison", y = "pearson_drugtype", color='black',fill=NA,
+  alpha=.5,
+  ylab = '', xlab='Comparison', add = "mean_sd",
+  title = 'Correlation between sampled drug type',
+  legend='none')+ 
+  geom_violin(aes(fill=comparison),color='black',alpha=.3,adjust=2.5) + 
+  scale_fill_manual(values=my_colors) +
+  stat_compare_means(comparisons = my_comparisons,label = 'p.signif')
+ggsave('temp.png',width=8,height = 5,units='in')
+
+
+drugs_agreement_bootstrapped %>% 
+  mutate(comparison = gsub('_',' and ',comparison)) %>%
+  ggplot(aes(x=comparison,y=pearson_drugtype)) + 
+  geom_jitter(aes(fill=comparison),color='black',shape=21,alpha=.75,size=2,width=.15,height=0) +
+  geom_violin(aes(fill=comparison),trim=TRUE,adjust=2,alpha=.5) + 
+  #geom_violin(inherit.aes=FALSE,aes(x=comparison, y=pearson_drugtype_shuf),trim=FALSE,fill='grey',adjust=2,alpha=.5) + 
+  geom_hline(aes(yintercept=1)) + 
+  geom_hline(aes(yintercept=0)) + 
+  geom_hline(aes(yintercept=.5),lty=2) + 
+  theme_bw() + 
+  theme(legend.position = 'none') + 
+  #lims(y=c(0,1)) +
+  theme(panel.grid = element_blank()) + 
+  labs(x='Pairwise comparison',y='Correlation')
+```
+
+GGpubr drug-level comparison.
+```{r}
+tdat <- twoway_agreement_bootstrapped %>%
+  pivot_longer(-c('drug','type', 'comparison','rep'), names_to='measure', values_to = 'value') %>% 
+  separate(measure, into=c('correlation','method','metric'),fill = 'right', remove=TRUE) %>%
+  replace_na(list(metric='estimate')) %>%
+  pivot_wider(names_from='metric',values_from='value') %>%
+  mutate(color = case_when(type == 'targeted' ~ 'red',
+                           TRUE ~ 'black')) %>%
+  filter(correlation !=  'spearman') %>%
+  #filter(type == 'targeted', method %in% c('aac', 'celltype')) %>%
+  filter((type=='broad' & method %in% c('posterior')) | (type=='targeted' & method %in% c('celltype'))) %>%
+  mutate(method = case_when(method=='aac' ~ 'raw', TRUE ~ 'posterior')) %>% 
+  mutate(drug=reorder(as.factor(drug),estimate)) %>%
+  select(drug, estimate, comparison, rep) %>% 
+  filter(!is.na(estimate)) %>%
+  group_by(drug, rep) %>% 
+  filter(n_distinct(comparison)==3) %>%
+  ungroup() %>% 
+  mutate(comparison = gsub('_',' and ',comparison))
+library(ggpubr)
+get_palette('uchicago')
+my_colors <- list("CTRP and GDSC"="#767676FF", 'CTRP and NCI60'="#800000FF", "GDSC and NCI60"="#FFA319FF")
+my_comparisons <- list( c("CTRP and NCI60", "CTRP and GDSC"),c("GDSC and NCI60", "CTRP and GDSC"),c("CTRP and NCI60", "GDSC and NCI60"))
+ggviolin(tdat %>% group_by(comparison, drug) %>% summarise(estimate = mean(estimate)) %>% ungroup() %>% 
+           mutate(comparison =  factor(comparison, levels=names(my_colors))), 
+  x = "comparison", y = "estimate", color='black',fill='comparison',
+  alpha=.3,
+  ylab = '', xlab='Comparison', add = "jitter", adjust = 2, draw_quantiles = c(.25,0.5,.75),
+  title = 'Correlation between sampled cell type',
+  legend='none')+ 
+  scale_fill_manual(values = my_colors) +
+  stat_compare_means(comparisons = my_comparisons,paired = TRUE)
+ggsave('temp.png',width=8,height = 5,units='in')
+```
+
+Bootstrapped correlations plot.
+```{r}
+twoway_agreement_bootstrapped %>%
+  pivot_longer(-c('drug','type', 'comparison','rep'), names_to='measure', values_to = 'value') %>% 
+  separate(measure, into=c('correlation','method','metric'),fill = 'right', remove=TRUE) %>%
+  replace_na(list(metric='estimate')) %>%
+  pivot_wider(names_from='metric',values_from='value') %>%
+  mutate(color = case_when(type == 'targeted' ~ 'red',
+                           TRUE ~ 'black')) %>%
+  mutate(drug=reorder(as.factor(drug),estimate)) %>%
+  filter(correlation !=  'spearman') %>%
+  filter(type == 'targeted', method %in% c('aac','soft', 'celltype')) %>%
+  ggplot(aes(x=drug, y=estimate, fill=method)) +
+  geom_hline(aes(yintercept=0),lty=2) +
+  geom_boxplot() + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position='top') +
+  scale_fill_viridis(discrete = TRUE,direction = -1) +
+  coord_flip() +
+  facet_grid(cols=vars(comparison),rows=vars(correlation))
+ggsave('temp.png',width=14,height=5,units='in')
+```
+
+Naive two-way agreement.
+```{r}
+library(ggrepel)
+twoway_agreement %>%
+  mutate(color = case_when(type == 'targeted' ~ 'D',
+                           TRUE ~ 'A')) %>%
+  ggplot(aes(x=spearman, y=pearson)) +
+  geom_abline(aes(slope=1,intercept=0),lty=2) +
+  geom_text_repel(aes(label=drug)) +
+  geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position='none') +
+  scale_fill_viridis(discrete = TRUE,direction = -1) +
+  scale_x_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
+  scale_y_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
+  labs(x='Spearman rank correlation', y='Pearson correlation') +
+  facet_wrap(vars(comparison),ncol=3)
+ggsave('temp.png',width=14,height=5,units='in')
+```
+
+Bar plot like shown in cellminer paper.
+```{r}
+tdat <- twoway_agreement %>% 
+  select(drug, pearson_aac_q, comparison) %>%
+  group_by(comparison) %>%
+  arrange(desc(pearson_aac_q)) %>%
+  mutate(reproducibility_rank_score = row_number()-1) %>% 
+  ungroup() %>%
+  mutate(reproducibility_rank_score = reproducibility_rank_score/max(reproducibility_rank_score)) %>% 
+  group_by(drug) %>%
+  summarise(reproducibility_rank_score = mean(reproducibility_rank_score)) %>% 
+  ungroup() 
+p1 <- tdat %>% 
+  ggplot(aes(x=reorder(drug,reproducibility_rank_score), y=reproducibility_rank_score,fill=drug)) + 
+  geom_bar(stat='identity',color='black', alpha=.6) + 
+  theme_bw() + 
+  theme(plot.title=element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position='none') +
+  scale_fill_viridis_d()
+tdat2 <- global_agreement %>% 
+  replace_na(list(global_corr = 0)) %>%
+  group_by(drug) %>%
+  summarise(agreement = mean(global_corr)) %>%
+  ungroup()
+p2 <- tdat2 %>% 
+  ggplot(aes(y=reorder(drug,agreement), x=agreement, fill=drug)) + 
+  geom_bar(stat='identity',color='black', alpha=.6) + 
+  theme_bw() + 
+  theme(plot.title=element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position='none') +
+  scale_fill_viridis_d()
+library(ggrepel) 
+p3 <- tdat2 %>%
+  arrange(agreement) %>%
+  mutate(agreement = row_number()-1) %>%
+  mutate(agreement = agreement/max(agreement)) %>%
+  left_join(tdat, by='drug') %>%
+  ggplot(aes(x=reproducibility_rank_score, y=agreement)) + 
+  stat_smooth(method='lm',se=FALSE,formula = y~x) + 
+  geom_abline(aes(slope=1,intercept=0),lty=2) + 
+  geom_text_repel(aes(label=drug),min.segment.length = 0, box.padding = 0.5) + 
+  geom_point(fill='grey', size=4,shape=21,color='black',alpha=.6) + 
+  theme_bw() +
+  scale_x_continuous(breaks=c(0,.5,1), limits = c(0,1)) + 
+  scale_y_continuous(breaks=c(0,.5,1), limits = c(0,1)) + 
+  theme(plot.title=element_blank(),
+        legend.position='none',
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) + 
+  scale_fill_viridis_d() + 
+  labs(x='Reproducibility rank score',y='Estimated posterior rank score')
+ggsave('temp.png',width=8,height=8,units='in')
+
+ggdraw() +
+  draw_plot(p3,0,0,.85,.85) +
+  draw_plot(p1,.05,.85,.80,.15) +
+  draw_plot(p2,.85,.05,.15,.80) 
+```
+
+Relationship between rank and correlation.
+```{r}
+tdat <- twoway_agreement %>% 
+  select(drug, pearson_aac_q, comparison) %>%
+  group_by(comparison) %>%
+  arrange(desc(pearson_aac_q)) %>%
+  mutate(reproducibility_rank_score = row_number()-1) %>% 
+  ungroup() %>%
+  mutate(reproducibility_rank_score = reproducibility_rank_score/max(reproducibility_rank_score)) %>% 
+  group_by(drug) %>%
+  summarise(reproducibility_rank_score = mean(reproducibility_rank_score)) %>% 
+  ungroup() 
+
+tdat2 <- twoway_agreement %>% 
+  select(drug, pearson_aac, comparison) %>%
+  group_by(drug) %>%
+  summarise(agreement = mean(pearson_aac)) %>% 
+  ungroup() 
+
+tdat2 %>%
+  left_join(tdat, by='drug') %>%
+  ggplot(aes(x=reproducibility_rank_score, y=agreement)) + 
+  geom_label_repel(aes(label=drug)) + 
+  geom_point(size=4,shape=21,color='black',alpha=.8) + 
+  geom_abline(aes(slope=1,intercept=0),lty=2) + 
+  stat_smooth(method='lm') + 
+  theme_bw() +
+  lims(x=c(-.1,1),y=c(-.1,1))
+
+```
+
+Similar but with correlation instead of rank.
+```{r}
+tdat <- twoway_agreement %>% 
+  select(drug, pearson_aac, comparison) %>%
+  group_by(drug) %>%
+  summarise(reproducibility_rank_score = mean(pearson_aac)) %>% 
+  ungroup() 
+p1 <- tdat %>% 
+  ggplot(aes(x=reorder(drug,reproducibility_rank_score), y=reproducibility_rank_score)) + 
+  geom_bar(stat='identity') + 
+  theme_bw() + 
+  theme(plot.title=element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+tdat2 <- global_agreement %>% 
+  replace_na(list(global_corr = 0)) %>%
+  group_by(drug) %>%
+  summarise(agreement = mean(global_corr)) %>%
+  ungroup()
+p2 <- tdat2 %>% 
+  ggplot(aes(y=reorder(drug,agreement), x=agreement)) + 
+  geom_bar(stat='identity') + 
+  theme_bw() + 
+  theme(plot.title=element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+
+p3 <- tdat2 %>%
+  left_join(tdat, by='drug') %>%
+  ggplot(aes(x=reproducibility_rank_score, y=agreement)) + 
+  geom_label_repel(aes(label=drug)) + 
+  geom_point(size=4,shape=21,color='black',alpha=.8) + 
+  geom_abline(aes(slope=1,intercept=0),lty=2) + 
+  stat_smooth(method='lm') + 
+  theme_bw() +
+  lims(x=c(-.1,1),y=c(-.1,1))
+
+ggdraw() +
+  draw_plot(p3,0,0,.85,.85) +
+  draw_plot(p1,.05,.85,.80,.15) +
+  draw_plot(p2,.85,.05,.15,.80) 
+```
+
+Plot two-way agreement for all drugs of pearson correlation for each comparison.
+```{r}
+twoway_agreement %>% 
+  select(drug, pearson, comparison) %>%
+  spread(comparison, pearson) %>%
+  ggplot(aes(x=CTRP_NCI60, y=GDSC_NCI60)) + 
+  geom_abline(aes(slope=1,intercept=0), lty=1, color='grey') +
+  geom_hline(aes(yintercept=0),lty=2, color='grey') +
+  geom_vline(aes(xintercept=0),lty=2, color='grey') +
+  geom_point(alpha=.75) + 
+  theme_bw() + 
+  scale_color_viridis(discrete=TRUE) + 
+  lims(y=c(-1,1),x=c(-1,1)) + 
+  theme(panel.grid = element_blank())
+ggsave('temp.png',width=4,height=4,units='in')
+```
+
+Boxplot of these comparisons.
+```{r}
+library(ggpubr)
+my_comparisons <- list( c("CTRP_GDSC", "CTRP_NCI60"),c("GDSC_NCI60", "CTRP_GDSC"),c("CTRP_NCI60", "GDSC_NCI60"))
+ggboxplot(twoway_agreement, 
+  x = "comparison", y = "pearson", color='comparison',palette = "jco",
+  ylab = '', xlab='Dataset', 
+  title='Pearson correlation',
+  subtitle='Restricted to cells/drugs present in all three studiess',
+  legend='none',
+  width=.5)+ 
+  stat_compare_means(comparisons = my_comparisons)
+ggsave('temp.png',width=6,height=6,units='in')
+```
+
+Plot two-way agreements for all drugs.
+```{r}
+library(ggrepel)
+twoway_agreement %>%
+  mutate(posterior = case_when(type=='targeted' ~ MCC,
+                               TRUE ~ pearson_posterior)) %>%
+  mutate(Correlation = case_when(type=='targeted' ~ 'Matthews',
+                               TRUE ~ 'Spearman')) %>%
+  mutate(comparison = gsub('_', ' and ',comparison)) %>% 
+ggplot(aes(x=spearman, y=posterior)) + 
+  geom_abline(aes(slope=1,intercept=0),lty=2) +
+  geom_text_repel(aes(label=drug)) +
+  geom_point(aes(fill=Correlation),alpha=.5, size=4, shape=21,color='black') + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position='none') +
+  scale_fill_viridis(discrete = TRUE) +
+  scale_x_continuous(breaks=c(0,.5,1), limits = c(-.3,1)) + 
+  scale_y_continuous(breaks=c(0,.5,1), limits = c(-.3,1)) + 
+  labs(x='Pearson correlation (raw AAC)', y='Correlation (model-based)') + 
+  facet_wrap(vars(comparison),ncol=3)
+ggsave('temp.png',width=8,height=8,units='in')
+```
+
+Boxplot of agreements.
+```{r}
+library(ggpubr)
+my_comparisons <- list( c("CTRP and GDSC", "CTRP and NCI60"),c("GDSC and NCI60", "CTRP and GDSC"),c("CTRP and NCI60", "GDSC and NCI60"))
+ggboxplot(twoway_agreement %>%
+  mutate(posterior = case_when(type=='targeted' ~ soft_MCC,
+                               TRUE ~ spearman_posterior)) %>%
+  mutate(Correlation = case_when(type=='targeted' ~ 'Matthews',
+                               TRUE ~ 'Spearman')) %>%
+  select(drug, spearman, posterior, comparison) %>%
+  gather('Method','Correlation', spearman, posterior) %>%
+  mutate(Method = case_when(Method=='spearman' ~ 'Spearman rank (raw AAC)',
+                            TRUE ~ 'Correlation (model-based)'),
+         comparison = gsub('_',' and ',comparison)), 
+  x = "comparison", y = "Correlation", color='comparison',palette = "jco",
+  ylab = 'Correlation', xlab='Pairwise comparison', facet.by = c('Method'),
+  legend='top',
+  width=.5)+ 
+  stat_compare_means(comparisons = my_comparisons) + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  labs(color='')
+ggsave('temp.png',width=8,height=6,units='in')
+```
+
+Two-way plots comparing raw values between study.
+```{r}
+dir.create('twoway_plots', showWarnings=FALSE)
+for (comp in names(intersection.fitted.list)) {
+  tibb <- intersection.fitted.list[[comp]]
+  curr_studies <- strsplit(comp,'_')[[1]]
+  drugss <- tibb %>% distinct(drug) %>% pull()
+  for (dr in drugss) {
+    p1 <- tibb %>%
+      filter(drug == dr) %>% 
+      filter(drug_type == 'broad') %>%
+      select(drug, cell, experiment, realized_value) %>%
+      spread(experiment, realized_value) %>%
+      rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+      ggplot(aes(x=v1, y=v2)) + 
+      geom_point() + 
+      geom_smooth(method='lm',se=FALSE) + 
+      theme_bw() +
+      #lims(x=c(0,1),y=c(0,1)) + 
+      labs(x=curr_studies[1],y=curr_studies[2])
+      ggsave(plot=p1, filename=paste('twoway_plots/',dr,'_',comp,'.png',sep=''),width=12,height=12,units='in')
+  }
+}
+```
+
+Drug type plot.
+```{r}
+drug_types_agreement <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  curr_studies <- strsplit(comp,'_')[[1]]
+  drug_types_agreement <- intersection.fitted.list[[comp]] %>% 
+    mutate(posterior_probability_targeted = round(posterior_probability_targeted,digits=2)) %>%
+    distinct(drug, experiment, posterior_probability_targeted) %>% 
+    spread(experiment, posterior_probability_targeted) %>%
+    rename(study1_targeted = curr_studies[1], study2_targeted = curr_studies[2]) %>%
+    mutate(comparison = comp) %>% 
+    bind_rows(drug_types_agreement)
+}
+drug_types_agreement %>%
+  ggplot(aes(x=study1_targeted, y=study2_targeted)) + 
+  geom_point(alpha=.5, size=2) + 
+  theme_bw() + 
+  facet_grid(cols=vars(comparison))
+```
+
+Bar plot of MCC of drug-type agreement.
+```{r}
+drug_types_agreement %>% 
+  mutate(study1_targeted = case_when(study1_targeted >=.5 ~ 'targeted', TRUE ~ 'broad'),
+         study2_targeted = case_when(study2_targeted >=.5 ~ 'targeted', TRUE ~ 'broad')) %>%
+  group_by(comparison) %>%
+    summarise(t00 = sum(study1_targeted=='broad' & study2_targeted=='broad'),
+              t11 = sum(study1_targeted=='targeted' & study2_targeted=='targeted'),
+              t01 = sum(study1_targeted=='broad' & study2_targeted=='targeted'),
+              t10 = sum(study1_targeted=='targeted' & study2_targeted=='broad')) %>%
+  ungroup() %>%
+  mutate(prop_agree = (t00+t11)/(t00+t11+t10+t01)) %>% 
+  group_by(comparison) %>%
+       mutate(t00 = pmax(t00,.5),
+              t11 = pmax(t11,.5),
+              t10 = pmax(t10,.5),
+              t01 = pmax(t01,.5)) %>% 
+         ungroup() %>%
+         mutate(LOR = log((t00*t11)/(t01*t10)),
+                SE_LOR = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
+                MCC = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) %>%
+    select(comparison, LOR, SE_LOR, MCC, prop_agree) %>%
+  mutate(comparison = gsub('_',' and ',comparison)) %>%
+  ggplot(aes(x=reorder(comparison, -prop_agree), y=prop_agree)) + 
+  geom_col() + 
+  theme(panel.grid = element_blank(),
+        axis.text.y = element_text(size=14),
+        axis.text.x = element_text(angle=45,hjust=1),
+        axis.title = element_text(size=14),
+        legend.position='none') +
+  #scale_fill_brewer(palette='Dark2') +
+  scale_y_continuous(breaks=c(0,.5,1), limits = c(0,1)) + 
+  labs(x='', y='Proportion') 
+ggsave('temp.png', width=5,height=4,units='in')
+```
+
+Drug type plot.
+```{r}
+drug_types_agreement <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  curr_studies <- strsplit(comp,'_')[[1]]
+  drug_types_agreement <- intersection.fitted.list[[comp]] %>% 
+    mutate(posterior_probability_targeted = round(posterior_probability_targeted,digits=2)) %>%
+    distinct(drug, experiment, posterior_probability_targeted) %>% 
+    spread(experiment, posterior_probability_targeted) %>%
+    rename(study1_targeted = curr_studies[1], study2_targeted = curr_studies[2]) %>%
+    mutate(comparison = comp) %>% 
+    bind_rows(drug_types_agreement)
+}
+
+drug_types_agreement %>%
+  mutate(color = case_when(study1_targeted*study2_targeted < (1-study1_targeted)*(1-study2_targeted) ~ 'A',
+                           TRUE ~ 'D')) %>%
+  pivot_longer(study1_targeted:study2_targeted, names_to = 'study',values_to='value') %>%
+  separate(comparison, into=c('study1','study2'),sep='_',remove = FALSE) %>%
+  mutate(study = case_when(study=='study1_targeted' ~ study1, 
+                           study=='study2_targeted' ~ study2)) %>%
+  select(-study1,-study2) %>%
+  mutate(value = value - .5) %>% 
+  ggplot(aes(x=reorder(drug,-value), y=value, fill=study)) + 
+  geom_bar(aes(color=color), stat='identity',position='dodge', alpha=.9, color='black') +  
+  geom_hline(aes(yintercept=0),lty=1) + 
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        legend.position='bottom') +
+  scale_y_continuous(breaks=c(-.5,-.25,0,.25,.5), labels= c(0,.25,.5,.75,1)) + 
+  scale_x_discrete(expand = c(0,2)) + 
+  annotate('text',x=0,y=.325, label='More targeted',size=5) +
+  annotate('text',x=39.5,y=-.325, label='Less targeted',size=5) +
+  geom_segment(aes(x=-.75, y = .25, xend=-.75, yend = .4), colour='black', size=.25,
+               arrow = arrow(angle=20, length = unit(.25, "cm"),type='closed')) +
+  geom_segment(aes(x=38.75, y = -.25, xend=38.75, yend = -.4), colour='black', size=.25,
+               arrow = arrow(angle=20, length = unit(.25, "cm"),type='closed')) +
+  labs(x='', y='Estimated drug targetedness',fill='') + 
+  coord_flip() + 
+  scale_fill_brewer(palette = "Set1")
+ggsave('temp.png',width=6,height=10,units='in')
+```
