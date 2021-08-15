@@ -26,7 +26,7 @@ Set options.
   #opt$datasets <- c('CCLE','GDSC1000', 'gCSI', 'FIMM', 'CTRPv2') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
   opt$biomarkers_file <- file.path(base_dir, 'PSets/gene_drug_asociations.xlsx')
   opt$min_intersection <- 2 # Minimum number of studies a drug/cell must be assayed in to be included in the intersection comparison
-  opt$log_dir <- file.path(base_dir, 'results',paste(paste(opt$datasets,collapse='_'),'fit_p60_2',sep='_'))
+  opt$log_dir <- file.path(base_dir, 'results',paste(paste(opt$datasets,collapse='_'),'fit_p60',sep='_'))
   opt$sensitivity_measure <- c('auc_recomputed') # raw_auc e_inf hill_slope ec50 auc_recomputed
   opt$use_small_datasets <- FALSE
   # Prior specifications denoting cell sensitivity and proportion of drugs broadly-active:
