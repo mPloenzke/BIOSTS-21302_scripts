@@ -26,6 +26,7 @@ Set options.
   opt$prior.sensitive <- .6 # prior specification denoting cell is sensitive if greater than this value
   opt$prior.broadly.active <- 'median_mad' #median .05 # prior specification denoting drug is broadly-active if probability cell is sensitive is greater than value
   opt$run_on_cluster <- FALSE # this just changes file paths depending on where the code is being run
+  opt$exclude_zeros <- FALSE 
 ```
 
 Set up log directory.
@@ -35,7 +36,7 @@ Set up log directory.
   if (opt$run_on_cluster) {
     base_dir <- 'PSets'
   } else {
-    base_dir <- '~/Desktop/Concordance/PSets'
+    base_dir <- '~/Downloads/Pharmacogenomics/PSets'
   }
 ```
 
@@ -165,9 +166,11 @@ ctrp <- ctrp %>%
 Cat these together into a list for individual fits.
 ```{r}
 sensitivity.tibble.list <- list(PRISM=prism, CTRP=ctrp, GDSC=gdsc)
-sensitivity.tibble.list <- lapply(sensitivity.tibble.list, function(tt) {
-  tt %>% filter(value > 0)
-})
+if (opt$exclude_zeros) {
+  sensitivity.tibble.list <- lapply(sensitivity.tibble.list, function(tt) {
+    tt %>% filter(value > 0)
+  })
+}
 ```
 
 Cat these into a list for the intersection cells and drugs.
@@ -183,7 +186,7 @@ intersection.tibble.list <- list('CTRP_PRISM' = full.intersection %>% filter(exp
 ```
 
 Plot the distribution of each measure for the intersection.
-```{r}
+```{r, eval=FALSE}
   for (meas in opt$sensitivity_measure) {
     dir.create(file.path(opt$log_dir,meas),showWarnings = FALSE)
     for (comp in names(intersection.tibble.list)) {
@@ -311,7 +314,7 @@ Plot the distribution of each measure for the intersection.
 ```
 
 Boxplot of all cells.
-```{r}
+```{r, eval=FALSE}
 p <- sensitivity.tibble.list[['CTRP']] %>%
   bind_rows(sensitivity.tibble.list[['GDSC']]) %>% 
   bind_rows(sensitivity.tibble.list[['PRISM']]) %>% 
@@ -332,7 +335,7 @@ saveRDS(p, file=file.path(opt$log_dir,meas,comp,paste('boxplot_raw_commons_drugs
 ```
 
 Repeat for individual studies.
-```{r}
+```{r, eval=FALSE}
   for (meas in opt$sensitivity_measure) {
     dir.create(file.path(opt$log_dir,meas),showWarnings = FALSE)
     for (comp in names(sensitivity.tibble.list)) {
@@ -383,7 +386,7 @@ Repeat for individual studies.
 ```
 
 Plot the pairwise concordance between two studies at a time.
-```{r}
+```{r, eval=FALSE}
   for (meas in opt$sensitivity_measure) {
     for (comp in names(intersection.tibble.list)) {
       combos <- t(combn(sort(unique(intersection.tibble.list[[comp]]$experiment)),2))
@@ -583,7 +586,7 @@ library(ggrepel)
 ```
 
 Smoothed density of the prior pi across all studies.
-```{r}
+```{r, eval=FALSE}
   for (meas in opt$sensitivity_measure) {
     temptibb <- tibble()
     for (comp in names(sensitivity.tibble.list)) {
@@ -663,6 +666,18 @@ broad_drug_fits_list <- lapply(cells.tibble.list, function(tibb) {
     mutate(drug_type = 'broad') %>%
     select(drug, drug_type, alpha, beta, number, broad_cell_type_prior, experiment)
 })
+targeted_drug_priors <- lapply(1:length(targetted_drug_fits_list), function(num) {
+  targetted_drug_fits_list[[num]] %>% 
+    rename(cell_type_prior = targeted_cell_type_prior) %>%
+    select(drug, drug_type, cell_type_prior, experiment, cell_type) %>%
+    mutate(drug_type = 'broad')
+})
+broad_drug_priors <- lapply(1:length(broad_drug_fits_list), function(num) {
+  broad_drug_fits_list[[num]] %>%
+    rename(cell_type_prior = broad_cell_type_prior) %>%
+    select(drug, drug_type, cell_type_prior, experiment) %>%
+    mutate(drug_type = 'targeted')
+})
 ```
 
 Perform an expectation step using the distributions to initialize for the EM. 
@@ -674,7 +689,7 @@ targetted_cell_assignments_list <- lapply(1:length(targetted_drug_fits_list), fu
       filter(drug == dr,measure==meas) %>%
       select(drug:measure) %>%
       mutate(drug_type = 'targeted') %>%
-      mutate(value=ifelse(value==0,1e-3,value)) %>%
+      mutate(value=ifelse(value<1e-3,1e-3,value)) %>%
       crossing(targetted_drug_fits_list[[num]] %>% filter(drug == dr) %>% select(-drug,-drug_type) %>% rename(experiment1=experiment)) %>%
       filter(experiment==experiment1) %>% 
       select(-experiment1) %>% 
@@ -699,7 +714,7 @@ broad_cell_assignments_list <- lapply(1:length(broad_drug_fits_list), function(n
       filter(drug %in% unique(broad_drug_fits_list[[num]]$drug),measure==meas) %>%
       select(drug:measure) %>%
       mutate(drug_type = 'broad') %>%
-      mutate(value=ifelse(value==0,1e-3,value)) %>%
+      mutate(value=ifelse(value<1e-3,1e-3,value)) %>%
       left_join(broad_drug_fits_list[[num]], by=c('drug','drug_type', 'experiment')) %>%
       mutate(likelihood = dbeta(value, alpha, beta),
              cell_type = ifelse((broad_cell_type_prior*pbeta(value, alpha, beta)) >
@@ -743,12 +758,14 @@ drug_assignments_list <- lapply(1:length(drugs.tibble.list), function(num) {
 
 cell_assignments_list <- lapply(1:length(targetted_cell_assignments_list), function(num) {
   bind_rows(targetted_cell_assignments_list[[num]],broad_cell_assignments_list[[num]]) %>%
-    group_by(drug, cell_type, experiment) %>%
-    fill(targeted_cell_type_prior, .direction='down') %>%
-    ungroup() %>%
-    group_by(drug, experiment) %>% 
-    fill(broad_cell_type_prior, .direction='up') %>%
-    ungroup() %>% 
+    left_join(targeted_drug_priors[[num]], by=c('drug','experiment','drug_type','cell_type')) %>%
+    mutate(targeted_cell_type_prior = case_when(is.na(targeted_cell_type_prior) & drug_type=='broad' ~ cell_type_prior,
+                                                TRUE ~ targeted_cell_type_prior)) %>%
+    select(-cell_type_prior) %>%
+    left_join(broad_drug_priors[[num]],  by=c('drug','experiment','drug_type')) %>%
+    mutate(broad_cell_type_prior = case_when(is.na(broad_cell_type_prior) & drug_type=='targeted' ~ cell_type_prior,
+                                                TRUE ~ broad_cell_type_prior)) %>%
+    select(-cell_type_prior) %>%
     right_join(drug_assignments_list[[num]] %>% select(drug, drug_type), by=c('drug','drug_type')) %>% 
     select(drug, cell, value, experiment, measure, drug_type, cell_type, broad_cell_type_prior, targeted_cell_type_prior)
 })
@@ -761,14 +778,18 @@ Run EM.
   for(num in 1:length(cell_assignments_list)) {
     drug_assignments <- drug_assignments_list[[num]]
     cell_assignments <- cell_assignments_list[[num]]
+    targeted_priors <- targeted_drug_priors[[num]]
+    broad_priors <- broad_drug_priors[[num]]
     iterations_list[[num]] <- accumulate(1:25, iterate_em, .init = list(drug_assignments = drug_assignments,
-                                                                       cell_assignments = cell_assignments))
+                                                                       cell_assignments = cell_assignments,
+                                                                       targeted_priors = targeted_priors,
+                                                                       broad_priors = broad_priors))
   }
   names(iterations_list) <- names(sensitivity.tibble.list)
 ```
 
 Plot parameters across iterations.
-```{r}
+```{r, eval=FALSE}
 for (num in names(iterations_list)) {
   drug_type_iterations <- iterations_list[[num]] %>% 
     map_df("drug_types", .id = "iteration") %>% 
@@ -843,8 +864,12 @@ Do one more rep.
   for(num in 1:length(cell_assignments_list)) {
     drug_assignments <- posterior_drug_assignments_list[[num]] %>% select(-iteration)
     cell_assignments <- posterior_cell_assignments_list[[num]]  %>% select(-iteration)
+    targeted_priors <- targeted_drug_priors[[num]]
+    broad_priors <- broad_drug_priors[[num]]
     posteriors_list[[num]] <- accumulate(1, iterate_em, .init = list(drug_assignments = drug_assignments,
-                                                                 cell_assignments = cell_assignments),
+                                                                 cell_assignments = cell_assignments,
+                                                                  targeted_priors = targeted_priors,
+                                                                       broad_priors = broad_priors),
                                          last=TRUE)
   }
   names(posteriors_list) <- names(sensitivity.tibble.list)
@@ -877,7 +902,7 @@ Do one more rep.
 ```
 
 Plot the posterior drug densities.
-```{r}  
+```{r, eval=FALSE}  
 drug_posteriors_proportions <- lapply(names(posterior_cell_assignments_list), function(ii) {
   posterior_cell_assignments_list[[ii]] %>%
     group_by(drug) %>%
@@ -1078,7 +1103,7 @@ Extract intersection data.
 ```
 
 Posterior drug type density plot.
-```{r}
+```{r, eval=FALSE}
 p <- posterior_drug_types %>% 
   crossing(x = seq(.001, .999, .001)) %>%
   group_by(experiment) %>%

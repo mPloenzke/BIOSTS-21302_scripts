@@ -22,17 +22,17 @@ Set options.
 ```{r}
   opt <- list()
   opt$datasets <- c('CCLE','GDSC') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
+  base_dir <- file.path('~/Downloads/Pharmacogenomics')
   #opt$datasets <- c('CCLE','GDSC1000', 'gCSI', 'FIMM', 'CTRPv2') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
-  #opt$biomarkers_file <- '~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx'
-  opt$biomarkers_file <- '~/concordance/PSets/gene_drug_asociations.xlsx'
+  opt$biomarkers_file <- file.path(base_dir, 'PSets/gene_drug_asociations.xlsx')
   opt$min_intersection <- 2 # Minimum number of studies a drug/cell must be assayed in to be included in the intersection comparison
-  opt$log_dir <- paste(paste(opt$datasets,collapse='_'),'fit_p60',sep='_')
+  opt$log_dir <- file.path(base_dir, 'results',paste(paste(opt$datasets,collapse='_'),'fit_p60_2',sep='_'))
   opt$sensitivity_measure <- c('auc_recomputed') # raw_auc e_inf hill_slope ec50 auc_recomputed
   opt$use_small_datasets <- FALSE
   # Prior specifications denoting cell sensitivity and proportion of drugs broadly-active:
   opt$prior.sensitive <- .6 # .3 # prior specification denoting cell is sensitive if greater than this value
   opt$prior.broadly.active <- 'median_mad' #median .05 # prior specification denoting drug is broadly-active if probability cell is sensitive is greater than value
-  opt$run_on_cluster <- TRUE # this just changes file paths depending on where the code is being run
+  opt$run_on_cluster <- FALSE # this just changes file paths depending on where the code is being run
 ```
 
 Set up log directory.
@@ -55,7 +55,7 @@ Load data.
     if (opt$run_on_cluster) {
       load(file.path('PSets',paste(dataset,'RData',sep='.')))
     } else {
-      load(file.path('../PSets',paste(dataset,'RData',sep='.')))
+      load(file.path(base_dir, 'PSets',paste(dataset,'RData',sep='.')))
     }
   }
   if (opt$use_small_datasets) {

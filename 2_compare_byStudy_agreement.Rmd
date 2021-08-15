@@ -15,12 +15,28 @@ theme_set(theme_bw())
 
 Load intersection posterior (CCLE v GDSC).
 ```{r}
-intersection.fitted.list <- readRDS('~/Desktop/Concordance/results/CCLE_GDSC_fit_p60/intersection.fitted.list.RDS')
+intersection.fitted.list <- readRDS('~/Downloads/Pharmacogenomics/results/CCLE_GDSC_fit_p60/intersection.fitted.list.RDS')
 ```
 
 Load posterior information for all cells/drugs/experiments.
 ```{r}
-posterior.formatted <- readRDS('~/Desktop/Concordance/results/CCLE_GDSC_fit_p60/posterior.formatted.RDS') 
+posterior.formatted <- readRDS('~/Downloads/Pharmacogenomics/results/CCLE_GDSC_fit_p60/posterior.formatted.RDS') 
+```
+
+Export
+
+```{r}
+for (nn in names(intersection.fitted.list)) {
+  intersection.fitted.list[[nn]] %>% 
+    filter((drug_type == 'targeted' & posterior_probability_targeted >= .5) | 
+           (drug_type == 'broad' & posterior_probability_targeted < .5)) %>% 
+    filter((cell_type == 'sensitive' & posterior_probability_sensitive >= .5 & drug_type == 'targeted') | 
+           (cell_type == 'resistant' & posterior_probability_sensitive < .5 & drug_type == 'targeted') | 
+           drug_type == 'broad') %>% 
+    select(drug, cell, experiment, realized_value, drug_type, posterior_probability_targeted, cell_type, posterior_probability_sensitive) %>%
+    as.data.frame() %>%
+    xlsx::write.xlsx(file='intersection_posteriors.xlsx', sheetName = nn, append = TRUE, row.names = FALSE, showNA=FALSE)
+}
 ```
 
 Density plots.
@@ -109,6 +125,24 @@ for (comp in names(intersection.fitted.list)) {
     mutate(type = case_when(study1_drugtype*study2_drugtype > (1-study1_drugtype)*(1-study2_drugtype) ~ 'targeted',
                             TRUE ~ 'broad')) %>%
     select(drug, type)
+  mcc_naive <- tibb %>% 
+    filter(drug_type=='targeted') %>%
+    mutate(cell_type = case_when(realized_value >= 0.2 ~ 'sensitive', TRUE ~ 'resistant')) %>%
+    select(drug, cell, cell_type, experiment) %>%
+    spread(experiment, cell_type) %>% 
+    na.omit() %>%
+    rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
+    group_by(drug) %>%
+    summarise(t00 = sum(v1=='resistant' & v2=='resistant'),
+              t11 = sum(v1=='sensitive' & v2=='sensitive'),
+              t01 = sum(v1=='resistant' & v2=='sensitive'),
+              t10 = sum(v1=='sensitive' & v2=='resistant')) %>%
+         ungroup() %>%
+         mutate(mcc_naive= (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01)),
+                mcc_naive = case_when(is.na(mcc_naive) & t01==0 & t10==0 ~ 1,
+                                      is.na(mcc_naive) & (t01!=0 | t10!=0) ~ 0,
+                                      TRUE ~ mcc_naive)) %>%
+    select(drug, mcc_naive)
   mcc_counts_rounded <- tibb %>% 
     filter(drug_type=='targeted') %>%
     select(drug, cell, cell_type, experiment) %>%
@@ -152,8 +186,13 @@ for (comp in names(intersection.fitted.list)) {
                                                   TRUE ~ pearson_celltype),
            spearman_celltype = case_when(is.na(spearman_celltype) & t01==0 & t10==0 ~ 1,
                                                   is.na(spearman_celltype) & (t01!=0 | t10!=0) ~ 0,
-                                                  TRUE ~ spearman_celltype)) %>%
-    select(drug, pearson_celltype, pearson_celltype_se, pearson_celltype_q, spearman_celltype, spearman_celltype_se, spearman_celltype_q)
+                                                  TRUE ~ spearman_celltype),
+           accuracy_celltype = (t11+t00)/(t11+t00+t01+t10),
+           proportion_sensitive = t11/(t11+t00+t01+t10)) %>%
+    select(drug,
+           pearson_celltype, pearson_celltype_se, pearson_celltype_q, 
+           spearman_celltype, spearman_celltype_se, spearman_celltype_q,
+           accuracy_celltype, proportion_sensitive) 
   mcc_soft <- tibb %>% 
     filter(drug_type=='targeted') %>%
     select(drug, cell, posterior_probability_sensitive, experiment) %>%
@@ -189,6 +228,7 @@ for (comp in names(intersection.fitted.list)) {
   twoway_agreement <- pearson %>% 
     left_join(pearson_posterior, by='drug') %>% 
     left_join(mcc_counts_rounded, by='drug') %>% 
+    left_join(mcc_naive, by='drug') %>% 
     left_join(mcc_counts_soft, by='drug') %>%
     left_join(mcc_rounded, by='drug') %>%
     left_join(mcc_soft, by='drug') %>%
@@ -548,7 +588,7 @@ library(ggrepel)
 twoway_agreement %>%
   mutate(color = case_when(drug %in% c('PD-0325901','17-AAG','paclitaxel') ~ 'A',
                            TRUE ~ 'D')) %>%
-  ggplot(aes(x=spearman, y=pearson)) +
+  ggplot(aes(x=spearman_aac, y=pearson_aac)) +
   geom_abline(aes(slope=1,intercept=0),lty=2) +
   geom_text_repel(aes(label=drug)) +
   geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
@@ -563,22 +603,21 @@ twoway_agreement %>%
 ggsave('temp.png',width=6,height=6,units='in')
 
 twoway_agreement %>%
-  mutate(color = case_when(drug %in% c('PD-0325901','17-AAG','paclitaxel') ~ 'A',
-                           TRUE ~ 'D')) %>%
-  ggplot(aes(x=LOR_naive, y=MCC_naive)) +
-  geom_vline(aes(xintercept=1),lty=2) +
-  geom_hline(aes(yintercept=0),lty=2) +
+  mutate(color = case_when(drug %in% c('PD-0325901','17-AAG','paclitaxel') ~ 'Broad effect',
+                           TRUE ~ 'Targeted')) %>%
+  ggplot(aes(x=pearson_celltype, y=accuracy_celltype)) +
+  geom_abline(aes(slope=1,intercept=0),lty=2) +
   geom_text_repel(aes(label=drug)) +
-  geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
+  geom_point(aes(fill=color,size=proportion_sensitive),alpha=.5, shape=21,color='black') + 
   theme(panel.grid = element_blank(),
         axis.text = element_text(size=14),
         axis.title = element_text(size=14),
-        legend.position='none') +
+        legend.position='top') +
   scale_fill_viridis(discrete = TRUE,direction=-1) +
-  scale_x_continuous(breaks=c(0,5,10), limits = c(-1,10)) + 
-  scale_y_continuous(breaks=c(0,.5,1), limits = c(-.2,1)) + 
-  labs(x='Log-odds ratio', y='Matthews correlation')
-ggsave('temp.png',width=6,height=6,units='in')
+  scale_x_continuous(breaks=c(0,.5,1), limits = c(-.1,1)) + 
+  scale_y_continuous(breaks=c(0,.5,1), limits = c(-.1,1)) + 
+  labs(x='phi', y='accuracy')
+ggsave('temp.png',width=8,height=8,units='in')
 ```
 
 Plot two-way agreements for all drugs.
@@ -703,12 +742,18 @@ ggsave('temp.png',width=6,height=8,units='in')
 
 Now repeat the above but for all five datasets.
 ```{r}
-intersection.fitted.list <- readRDS('~/Desktop/Concordance/results/CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/intersection.fitted.list.RDS')
+intersection.fitted.list <- readRDS('~/Downloads/Pharmacogenomics/results/CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/intersection.fitted.list.RDS')
 ```
 
 Load posterior information for all cells/drugs/experiments.
 ```{r}
-posterior.formatted <- readRDS('~/Desktop/Concordance/results/CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/posterior.formatted.RDS') 
+posterior.formatted <- readRDS('~/Downloads/Pharmacogenomics/results/CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/posterior.formatted.RDS') 
+```
+
+Export for supplement.
+
+```{r}
+write_csv(posterior.formatted, file='posteriors.csv')
 ```
 
 Calculate pearson correlation and MCC.
@@ -718,7 +763,7 @@ for (comp in names(intersection.fitted.list)) {
   tibb <- intersection.fitted.list[[comp]]
   curr_studies <- strsplit(comp,'_')[[1]]
   pearson <- tibb %>% 
-    filter(drug_type=='broad') %>%
+    #filter(drug_type=='broad') %>%
     select(drug, cell, realized_value, experiment) %>%
     spread(experiment, realized_value) %>% 
     na.omit() %>%
@@ -729,7 +774,7 @@ for (comp in names(intersection.fitted.list)) {
               spearman = cor(v1,v2,method='spearman')) %>%
     ungroup()
   pearson_posterior <- tibb %>% 
-    filter(drug_type=='broad') %>%
+    #filter(drug_type=='broad') %>%
     select(drug, cell, posterior_probability_sensitive, experiment) %>%
     spread(experiment, posterior_probability_sensitive) %>% 
     na.omit() %>%
@@ -750,13 +795,14 @@ for (comp in names(intersection.fitted.list)) {
                             TRUE ~ 'broad')) %>%
     select(drug, type)
   mcc <- tibb %>% 
-    filter(drug_type=='targeted') %>%
+    #filter(drug_type=='targeted') %>%
     select(drug, cell, cell_type, experiment) %>%
     spread(experiment, cell_type) %>% 
     na.omit() %>%
     rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
     group_by(drug) %>%
-    summarise(t00 = sum(v1=='resistant' & v2=='resistant'),
+    summarise(accuracy = mean((v1 == 'sensitive' & v2 == 'sensitive') | (v1 == 'resistant' & v2 == 'resistant')),
+              t00 = sum(v1=='resistant' & v2=='resistant'),
               t11 = sum(v1=='sensitive' & v2=='sensitive'),
               t01 = sum(v1=='resistant' & v2=='sensitive'),
               t10 = sum(v1=='sensitive' & v2=='resistant')) %>%
@@ -768,9 +814,9 @@ for (comp in names(intersection.fitted.list)) {
          mutate(LOR = log((t00*t11)/(t01*t10)),
                 SE_LOR = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
                 MCC = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) %>%
-    select(drug, LOR, SE_LOR, MCC)
+    select(drug, LOR, SE_LOR, MCC, accuracy)
   soft_mcc <- tibb %>% 
-    filter(drug_type=='targeted') %>%
+    #filter(drug_type=='targeted') %>%
     select(drug, cell, posterior_probability_sensitive, experiment) %>%
     spread(experiment, posterior_probability_sensitive) %>% 
     na.omit() %>%
@@ -801,12 +847,14 @@ Naive two-way agreement.
 ```{r}
 library(ggrepel)
 twoway_agreement %>%
+  mutate(comparison = gsub('_',' & ', comparison)) %>% 
   mutate(color = case_when(type == 'targeted' ~ 'D',
                            TRUE ~ 'A')) %>%
   ggplot(aes(x=spearman, y=pearson)) +
-  geom_abline(aes(slope=1,intercept=0),lty=2) +
+  geom_abline(aes(slope=1,intercept=0),lty=2, color='grey') +
   #geom_text_repel(aes(label=drug)) +
-  geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
+  #geom_point(aes(fill=color),alpha=.5, size=4, shape=21,color='black') + 
+  geom_point(shape=4) + 
   theme(panel.grid = element_blank(),
         axis.text = element_text(size=14),
         axis.title = element_text(size=14),
@@ -815,6 +863,26 @@ twoway_agreement %>%
   scale_x_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
   scale_y_continuous(breaks=c(-.5,0,.5,1), limits = c(-.5,1)) + 
   labs(x='Spearman rank correlation', y='Pearson correlation') +
+  facet_wrap(vars(comparison),ncol=5)
+ggsave('temp.png',width=14,height=7,units='in')
+```
+
+Spearman v Accuracy for targeted drugs.
+```{r}
+library(ggrepel)
+twoway_agreement %>%
+  mutate(comparison = gsub('_',' & ', comparison)) %>% 
+  mutate(color = case_when(type == 'targeted' ~ 'D',
+                           TRUE ~ 'A')) %>%
+  ggplot(aes(x=spearman, y=accuracy)) + 
+  geom_point(shape=21,size=2.5,alpha=.75, fill='grey') +
+  theme(axis.text  = element_text(size=14),
+        axis.title  = element_text(size=14),
+        plot.title  = element_text(size=16)) + 
+  scale_y_continuous(limits = c(-.1,1),labels = c(0,.5,1), breaks=c(0,.5,1)) +  
+  scale_x_continuous(limits = c(-.1,1), labels = c(0,.5,1), breaks=c(0,.5,1)) +
+  labs(x = "Spearman rank correlation",
+       y = "Accuracy") + 
   facet_wrap(vars(comparison),ncol=5)
 ggsave('temp.png',width=14,height=7,units='in')
 ```
@@ -885,7 +953,33 @@ drug_types_agreement %>%
   facet_wrap(vars(comparison), ncol=5) 
 ```
 
-Bar plot of MCC of drug-type agreement.
+Hex of rounded drug types.
+```{r}
+drug_types_agreement %>% 
+  mutate(study1_label = case_when(study1_targeted >= .5 ~ 'Targeted',
+                                  TRUE ~ 'Broad effect'),
+         study2_label = case_when(study2_targeted >= .5 ~ 'Targeted',
+                                  TRUE ~ 'Broad effect')) %>% 
+  ggplot(aes(x=study1_targeted, y=study2_targeted)) + 
+  geom_hline(aes(yintercept=.5)) + 
+  geom_vline(aes(xintercept=.5)) + 
+  geom_hex(bins=16) + 
+  scale_fill_continuous(type = "viridis", limits=c(0,80)) +
+  theme_bw() + 
+  scale_y_continuous(breaks=c(0,.5,1)) + 
+  scale_x_continuous(breaks=c(0,.5,1)) + 
+  theme(panel.grid=element_blank(),
+        axis.text.x = element_text(size=14),
+        axis.title.x = element_text(size=14),
+        axis.text.y = element_text(size=14),
+        legend.text = element_text(size=14),
+        legend.title = element_text(size=14),
+        axis.title.y = element_text(size=14)) + 
+  labs(x = 'Estimated targetedness in dataset 1', y = 'Estimated targeted in dataset 2')
+ggsave('temp.png', width=7,height=5,units='in')
+```
+
+Bar plot of agreement of drug-type agreement.
 ```{r}
 drug_types_agreement %>% 
   mutate(study1_targeted = case_when(study1_targeted >=.5 ~ 'targeted', TRUE ~ 'broad'),
@@ -896,7 +990,8 @@ drug_types_agreement %>%
               t01 = sum(study1_targeted=='broad' & study2_targeted=='targeted'),
               t10 = sum(study1_targeted=='targeted' & study2_targeted=='broad')) %>%
   ungroup() %>%
-  mutate(prop_agree = (t00+t11)/(t00+t11+t10+t01)) %>% 
+  mutate(prop_agree = (t00+t11)/(t00+t11+t10+t01),count_agree = t00+t11,
+                total = t00+t01+t10+t11) %>% 
   group_by(comparison) %>%
         mutate(t00 = pmax(t00,.5),
               t11 = pmax(t11,.5),
@@ -906,18 +1001,22 @@ drug_types_agreement %>%
          mutate(LOR = log((t00*t11)/(t01*t10)),
                 SE_LOR = sqrt(((1/t00)+(1/t11)+(1/t01) + (1/t10))),
                 MCC = (t00*t11-t01*t10)/sqrt((t11+t01)*(t11+t10)*(t00+t10)*(t00+t01))) %>%
-    select(comparison, LOR, SE_LOR, MCC, prop_agree) %>%
+    select(comparison, LOR, SE_LOR, MCC, prop_agree, count_agree, total) %>%
   mutate(comparison = gsub('_',' and ',comparison)) %>%
-  ggplot(aes(x=reorder(comparison, -prop_agree), y=prop_agree)) + 
-  geom_col() + 
+  ggplot(aes(x=reorder(comparison, prop_agree), y=prop_agree)) + 
+  geom_hline(aes(yintercept=0)) + 
+  geom_hline(aes(yintercept=1)) + 
+  geom_col(color='black', fill='grey') + 
+  geom_text(aes(label=count_agree, y=prop_agree), hjust=-1, size=5) + 
+  geom_text(aes(label=total, y=1), hjust=-1, size=5) + 
   theme(panel.grid = element_blank(),
         axis.text.y = element_text(size=14),
-        axis.text.x = element_text(angle=45,hjust=1),
+        axis.text.x = element_text(size=14),
         axis.title = element_text(size=14),
         legend.position='none') +
   #scale_fill_brewer(palette='Dark2') +
-  scale_y_continuous(breaks=c(0,.5,1), limits = c(0,1)) + 
-  labs(x='', y='Proportion') 
-ggsave('temp.png', width=,height=4,units='in')
+  scale_y_continuous(breaks=c(0,.5,1), limits = c(0,1.05)) + 
+  labs(x='', y='Proportion') + 
+  coord_flip()
+ggsave('temp.png', width=10,height=12,units='in')
 ```
-
