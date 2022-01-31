@@ -14,21 +14,13 @@ library(PharmacoMixtuR)
 Set options
 
 ```{r}
-opt <- list()
-opt$datasets <- c('PRISM','GDSC','CTRP')
-opt$sensitivity_measure <- 'auc'
-opt$log_dir <- paste(paste(opt$datasets,collapse='_'),'fit',sep='_')
-# Prior specifications denoting cell sensitivity and proportion of drugs broadly-active:
-opt$prior.sensitive <- .6 # prior specification denoting cell is sensitive if greater than this value
-opt$prior.broadly.active <- 'median_mad' #median .05 # prior specification denoting drug is broadly-active if probability cell is sensitive is greater than value
-opt$exclude_zeros <- FALSE 
-```
-
-Set up log directory
-
-```{r}
-dir.create(opt$log_dir,showWarnings = FALSE)
-capture.output(opt, file = file.path(opt$log_dir,'model_Opts.csv'))
+datasets = c('PRISM','GDSC','CTRP') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
+exclude_zeros = FALSE
+prism_dir = file.path('~/Downloads', 'prism')
+output_dir = file.path('~/Downloads', 'results', paste(paste(datasets,collapse='_'),
+                                                       paste0('zeros_', iflese(exclude_zeros,'excluded','included')),
+                                                       sep='_'))
+dir.create(output_dir, showWarnings = FALSE, recursive=TRUE)
 ```
 
 Name fixes
@@ -53,7 +45,7 @@ Load prism
     - https://depmap.org/portal/download/all/?release=CTRP+CTD%5E2&file=CTRPv2.0_2015_ctd2_ExpandedDataset.zip
   
 ```{r}
-prism <- read.csv(file.path(base_dir,"prism/secondary-screen-dose-response-curve-parameters.csv"), stringsAsFactors=FALSE) %>% 
+prism <- read.csv(file.path(prism_dir,"secondary-screen-dose-response-curve-parameters.csv"), stringsAsFactors=FALSE) %>% 
   as_tibble() %>%
   select(broad_id, depmap_id, ccle_name, screen_id, name, moa, target, disease.area, auc, row_name, passed_str_profiling) %>% 
   mutate(name = tolower(name))
@@ -80,7 +72,7 @@ prism <- prism %>%
          cell = row_name, 
          value = auc) %>%
   mutate(experiment = 'PRISM',
-         measure = opt$sensitivity_measure) %>%
+         measure = auc) %>%
   select(drug, cell, value, experiment, measure) %>%
   distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
   na.omit() %>%
@@ -91,7 +83,7 @@ prism <- prism %>%
 Load GDSC
 
 ```{r}
-gdsc <- read.csv(file.path(base_dir, 'prism/sanger-dose-response.csv'), stringsAsFactors = FALSE) %>% 
+gdsc <- read.csv(file.path(prism_dir, 'sanger-dose-response.csv'), stringsAsFactors = FALSE) %>% 
   as_tibble() %>%
   select(DATASET, COSMIC_ID, DRUG_ID, ARXSPAN_ID, DRUG_NAME, BROAD_ID, AUC_PUBLISHED, auc) %>%
   rename_all(tolower) %>%
@@ -107,7 +99,7 @@ gdsc <- gdsc %>%
          cell = arxspan_id, 
          value = auc) %>%
   mutate(experiment = 'GDSC',
-         measure = opt$sensitivity_measure) %>%
+         measure = auc) %>%
   arrange(desc(dataset)) %>%
   select(drug, cell, value, experiment, measure) %>%
   distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
@@ -119,16 +111,16 @@ gdsc <- gdsc %>%
 Load CTRP
 
 ```{r}
-ctrp <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.data.curves_post_qc.txt'),stringsAsFactors = FALSE) %>%
+ctrp <- read.delim(file.path(prism_dir,'CTRPv2.0_2015_ctd2_ExpandedDataset/v20.data.curves_post_qc.txt'),stringsAsFactors = FALSE) %>%
   as_tibble() %>%
   select(experiment_id, area_under_curve, master_cpd_id, conc_pts_fit) %>%
   mutate(area_under_curve = area_under_curve/conc_pts_fit) %>%
   select(-conc_pts_fit)
-cpds <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_compound.txt'),stringsAsFactors = FALSE) %>%
+cpds <- read.delim(file.path(prism_dir,'CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_compound.txt'),stringsAsFactors = FALSE) %>%
   as_tibble()
-experis <-  read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_experiment.txt'),stringsAsFactors = FALSE) %>%
+experis <-  read.delim(file.path(prism_dir,'CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_experiment.txt'),stringsAsFactors = FALSE) %>%
   as_tibble()
-cellls <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_cell_line.txt'),stringsAsFactors = FALSE) %>%
+cellls <- read.delim(file.path(prism_dir,'CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_cell_line.txt'),stringsAsFactors = FALSE) %>%
   as_tibble()
 ctrp <- ctrp %>%
   left_join(cpds %>% select(master_cpd_id, cpd_name, broad_cpd_id), by=c('master_cpd_id')) %>%
@@ -149,7 +141,7 @@ ctrp <- ctrp %>%
          cell = ccle_name, 
          value = area_under_curve) %>%
   mutate(experiment = 'CTRP',
-         measure = opt$sensitivity_measure) %>%
+         measure = auc) %>%
   select(drug, cell, value, experiment, measure) %>%
   distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
   na.omit() %>% 
@@ -168,7 +160,7 @@ Cat these together into a list for individual fits
 
 ```{r}
 sensitivity.tibble.list <- list(PRISM=prism, CTRP=ctrp, GDSC=gdsc)
-if (opt$exclude_zeros) {
+if (exclude_zeros) {
   sensitivity.tibble.list <- lapply(sensitivity.tibble.list, function(tt) {
     tt %>% filter(value > 0)
   })
@@ -199,7 +191,7 @@ Initialize drug and cell assignments
 ```{r}
 drugs.tibble.list <- lapply(sensitivity.tibble.list, function(li) {
   drug_dat <- li %>% 
-    mutate(all_median = quantile(value,opt$prior.sensitive),
+    mutate(all_median = quantile(value,.6),
            all_mad = stats::mad(value),
            drug=as.factor(drug)) %>% 
     group_by(drug) %>% 
@@ -226,7 +218,7 @@ cells.tibble.list <- lapply(1:length(sensitivity.tibble.list), function(li) {
     select(drug:measure,drug_type) %>%
     ungroup() %>% 
     group_by(experiment) %>%
-    mutate(prior_threshold = quantile(value,probs = opt$prior.sensitive), 
+    mutate(prior_threshold = quantile(value,probs = .6), 
            cell_type = ifelse(value>=prior_threshold,'sensitive','resistant')) %>%
     ungroup()
 })
@@ -236,7 +228,7 @@ names(cells.tibble.list) <- names(drugs.tibble.list)
 Fit distributions and use these to initialize EM
 
 ```{r}
-meas <- opt$sensitivity_measure
+meas <- auc
 drug_types_list <- lapply(drugs.tibble.list, function(tibb) {
   tibb %>%
     filter(measure==meas) %>%
@@ -514,18 +506,18 @@ posterior_cell_assignments <- do.call(bind_rows,posterior_cell_assignments_full)
 Save posteriors
 
 ```{r}
-saveRDS(object=posterior_drug_types,file=file.path(opt$log_dir,'posterior_drug_types.RDS'))
-saveRDS(object=posterior_drug_fits,file=file.path(opt$log_dir,'posterior_drug_fits.RDS'))
-saveRDS(object=posterior_drug_assignments,file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
-saveRDS(object=posterior_cell_assignments,file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
+saveRDS(object=posterior_drug_types,file=file.path(output_dir,'posterior_drug_types.RDS'))
+saveRDS(object=posterior_drug_fits,file=file.path(output_dir,'posterior_drug_fits.RDS'))
+saveRDS(object=posterior_drug_assignments,file=file.path(output_dir,'posterior_drug_assignments.RDS'))
+saveRDS(object=posterior_cell_assignments,file=file.path(output_dir,'posterior_cell_assignments.RDS'))
 ```
 
 Format data frame with posterior information
 
 ```{r}
-posterior_cell_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
-posterior_drug_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
-posterior_drug_fits <- readRDS(file=file.path(opt$log_dir,'posterior_drug_fits.RDS'))
+posterior_cell_assignments <- readRDS(file=file.path(output_dir,'posterior_cell_assignments.RDS'))
+posterior_drug_assignments <- readRDS(file=file.path(output_dir,'posterior_drug_assignments.RDS'))
+posterior_drug_fits <- readRDS(file=file.path(output_dir,'posterior_drug_fits.RDS'))
 posterior <- posterior_cell_assignments %>%
   select(drug, cell, experiment, drug_type, cell_type, posterior, likelihood, value) %>%
   rename(cell_type_posterior=posterior,
@@ -551,7 +543,7 @@ posterior <- posterior_cell_assignments %>%
   mutate(drug_type_posterior = ifelse(drug_type == 'broad', 1-drug_type_posterior,drug_type_posterior)) %>%
   rename(posterior_probability_sensitive = cell_type_posterior,
          posterior_probability_targeted = drug_type_posterior)
-saveRDS(object=posterior,file=file.path(opt$log_dir,'posterior.formatted.RDS'))
+saveRDS(object=posterior,file=file.path(output_dir,'posterior.formatted.RDS'))
 ```
 
 Extract intersection data
@@ -577,5 +569,5 @@ intersection.fitted.list <- lapply(intersection.tibble.list, function(tibb) {
         replace_na(list(cell_type='resistant', posterior_probability_sensitive=0,cell_type_likelihood=1)) %>%
         ungroup()
 })
-saveRDS(object=intersection.fitted.list,file=file.path(opt$log_dir,'intersection.fitted.list.RDS'))
+saveRDS(object=intersection.fitted.list,file=file.path(output_dir,'intersection.fitted.list.RDS'))
 ```

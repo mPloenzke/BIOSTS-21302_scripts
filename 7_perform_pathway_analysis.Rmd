@@ -15,8 +15,9 @@ library(PharmacoGx)
 Set options for the run
 
 ```{r}
-comparison <- "CCLE_GDSC1000_CTRPv2_FIMM_gCSI"
-#comparison <- 'CCLE_GDSC'
+comparison <- "CCLE_GDSC1000_CTRPv2_FIMM_gCSI" # CCLE_GDSC
+pset_dir <- file.path('~/Downloads', 'PSets')
+posteriors_dir <- file.path('~/Downloads','results')
 min_posterior_probability_sensitive <- .5 # minimum posterior probability for denoting a cell is sensitive
 use_all_features <- TRUE # use all available features (TRUE) or restrict to features with a previously-documented association (FALSE)
 downsample_features <- TRUE # downsample to 5K most variable features (TRUE, recommended)
@@ -25,20 +26,20 @@ impute_with_mean <- TRUE # if a feature exists for some cells but not others, re
 mean_common_cells <- FALSE # reduce joint dataset to mean sensitivity measure 
 individual_study_measures <- c('auc_recomputed','naive')
 joint_study_measures <- c('naive','auc_recomputed','posterior_probability_sensitive','cell_type')
-base_log_dir <- paste(comparison,'pathway',feature.types[1],sep='_')
-dir.create(base_log_dir,showWarnings = FALSE)
+output_dir <- paste(comparison,'pathway',feature.types[1],sep='_')
+dir.create(output_dir,showWarnings = FALSE)
 ```
 
 Load posteriors
 
 ```{r}
-joint_posteriors <- readRDS(file.path('~/Desktop/Concordance/tidyPharmaco',
+joint_posteriors <- readRDS(file.path(posteriors_dir,
                                       paste(comparison,'_fit_joint',sep=''),
                                       'posterior.formatted.RDS')) 
-gene_drug_asociations <- read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "mutation") %>%
+gene_drug_asociations <- read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "mutation") %>%
   as_tibble() %>%
-  bind_rows(read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "copy_number_variation"),
-            read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "expression"))
+  bind_rows(read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "copy_number_variation"),
+            read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "expression"))
 all_posteriors <-joint_posteriors %>%
               mutate(Model_fit = 'joint')
 rm(joint_posteriors)
@@ -71,7 +72,6 @@ all_drugs  <- all_posteriors %>%
 print(unique(all_drugs$num_exps))
 all_drugs <- all_drugs %>% 
   distinct(drug) %>% 
-  #filter(row_number()==1) %>%
   pull(drug)
 posterior <- all_posteriors %>% select(cell, drug, experiment, posterior_probability_sensitive, Model_fit)
 datasets <- posterior %>% distinct(experiment) %>% pull()
@@ -102,7 +102,7 @@ Set up X and Y data matrices, one per study
 rez <- list()
 for (dataset in datasets) {
   print(dataset)
-  load(file.path('~/Desktop/Concordance/PSets',paste(dataset,'RData',sep='.')))
+  load(file.path(pset_dir,paste(dataset,'RData',sep='.')))
   eval(parse(text = paste('tempPset <- ',dataset,sep='')))
   print(paste(dataset, 'available features:',paste(mDataNames(tempPset),collapse=' '), sep=' '))
   y_new_temp <- summarizeSensitivityProfiles(tempPset, sensitivity.measure = 'auc_recomputed', summary.stat = 'median', verbose = FALSE) %>%
@@ -224,8 +224,8 @@ Pathway analysis for varying outcome variables
 
 ```{r}
 for (drug_for_biomarkers in all_drugs) {
-  log_dir <- file.path(base_log_dir,drug_for_biomarkers)
-  dir.create(log_dir,showWarnings = FALSE)
+  output_dir <- file.path(output_dir,drug_for_biomarkers)
+  dir.create(output_dir,showWarnings = FALSE)
   for (study in names(rez)) {
     rez[[study]] <- rez[[study]][!(colSums(is.na(rez[[study]])) == nrow(rez[[study]]))]
     ourData <- rez[[study]] %>%
@@ -285,10 +285,10 @@ for (drug_for_biomarkers in all_drugs) {
             kegg_pathways <- limma::kegga(fit,geneid='entrezgene_id')
         
             #write_csv(g_ontology,
-            #          path=file.path(log_dir, paste('GO_',depVar,'_',study,'.csv',sep='')), 
+            #          path=file.path(output_dir, paste('GO_',depVar,'_',study,'.csv',sep='')), 
             #          col_names = TRUE, append = FALSE)
             write_csv(kegg_pathways, 
-                      path=file.path(log_dir, paste('KEGG_',depVar,'_',study,'.csv',sep='')), 
+                      path=file.path(output_dir, paste('KEGG_',depVar,'_',study,'.csv',sep='')), 
                       col_names = TRUE, append = FALSE)
           }
         }
@@ -302,8 +302,8 @@ Pathway analysis for joint
 
 ```{r}
 for (drug_for_biomarkers in all_drugs) {
-  log_dir <- file.path(base_log_dir,drug_for_biomarkers)
-  dir.create(log_dir,showWarnings = FALSE)
+  output_dir <- file.path(output_dir,drug_for_biomarkers)
+  dir.create(output_dir,showWarnings = FALSE)
   print(drug_for_biomarkers)
   naive_cutoff <- .2
   if (mean_common_cells) {
@@ -429,10 +429,10 @@ for (drug_for_biomarkers in all_drugs) {
           kegg_pathways <- limma::kegga(fit,geneid='entrezgene_id')
           
           #write_csv(g_ontology,
-          #          path=file.path(log_dir, paste('GO_',depVar,'.csv',sep='')), 
+          #          path=file.path(output_dir, paste('GO_',depVar,'.csv',sep='')), 
           #          col_names = TRUE, append = FALSE)
           write_csv(kegg_pathways, 
-                    path=file.path(log_dir, paste('KEGG_',depVar,'.csv',sep='')), 
+                    path=file.path(output_dir, paste('KEGG_',depVar,'.csv',sep='')), 
                     col_names = TRUE, append = FALSE)
         }
       }

@@ -14,50 +14,33 @@ library(tidyverse)
 Set options
 
 ```{r}
-opt <- list()
-opt$datasets <- c("CCLE", "GDSC1000", 'CTRPv2', 'FIMM') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
-#opt$datasets <- c("CCLE", "GDSC")
-#opt$biomarkers_file <- '~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx'
-opt$biomarkers_file <- '~/concordance/PSets/gene_drug_asociations.xlsx'
-opt$min_intersection <- 1 # Minimum number of studies a drug/cell must be assayed in to be included in the intersection comparison
-opt$log_dir <- paste(paste(opt$datasets,collapse='_'),'fit_joint',sep='_')
-opt$sensitivity_measure <- c('auc_recomputed') # raw_auc e_inf hill_slope ec50 auc_recomputed
-opt$use_small_datasets <- FALSE
-# Prior specifications denoting cell sensitivity and proportion of drugs broadly-active:
-opt$drug.type.prior <- .6 # quantile of cell sensitivity denoting drug is targeted if greater than this value
-opt$cell.type.prior <- .9 # quantile of cell sensitivity denoting cell is sensitive if greater than this value
-opt$prior.broadly.active <- 'median_mad' #median.05 # prior specification denoting drug is broadly-active if probability cell is sensitive is greater than value
-opt$run_on_cluster <- TRUE # this just changes file paths depending on where the code is being run
-```
-
-Set up log directory
-
-```{r}
-dir.create(opt$log_dir,showWarnings = FALSE)
-capture.output(opt, file = file.path(opt$log_dir,'model_Opts.csv'))
+datasets = c("CCLE", "GDSC1000", 'CTRPv2', 'FIMM') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
+pset_dir = file.path('~/Downloads', 'PSets')
+output_dir = file.path('~/Downloads', 'results', paste(paste(datasets,collapse='_'),'fit_across_study',sep='_'))
+dir.create(output_dir, showWarnings = FALSE, recursive=TRUE)
 ```
 
 Load data
 
 ```{r}
-for (dataset in opt$datasets) {load(file.path('PSets',paste(dataset,'RData',sep='.')))} 
+for (dataset in datasets) {load(file.path(pset_dir,paste(dataset,'RData',sep='.')))} 
 ```
 
 Format and intersection the sensitivity data for each experiment
 
 ```{r}
-intersection.tibble.list <- intersectPSetWrapper(datasets = opt$datasets,
-                                                minimum_intersection = opt$min_intersection,
+intersection.tibble.list <- intersectPSetWrapper(datasets = datasets,
+                                                minimum_intersection = 1,
                                                 intersectOn = c("drugs", "cell.lines"),
-                                                sensitivity_measure = opt$sensitivity_measure,
+                                                sensitivity_measure = "auc_recomputed",
                                                 remove_noisy_curves = FALSE,
                                                 remove_mislabelled_cells = FALSE)
 intersection.tibble.list <- list(do.call(bind_rows,intersection.tibble.list))
-names(intersection.tibble.list) <- paste(opt$datasets,collapse='_')
+names(intersection.tibble.list) <- paste(datasets,collapse='_')
 intersection.tibble.list <- lapply(intersection.tibble.list, function(ii) {
   ii %>% group_by(drug,measure) %>% filter(n_distinct(experiment) >= 2) %>% ungroup()
 })
-for (dd in opt$datasets) {
+for (dd in datasets) {
   eval(parse(text=paste('rm(',dd, ')',sep='')))
 }
 ```
@@ -67,7 +50,7 @@ Initialize drug and cell assignments
 ```{r}
 drugs.tibble.list <- lapply(intersection.tibble.list, function(li) {
   drug_dat <- li %>% 
-    mutate(all_median = quantile(value,opt$drug.type.prior),
+    mutate(all_median = quantile(value,.6),
            all_mad = stats::mad(value),
            drug=as.factor(drug)) %>% 
     group_by(drug) %>% 
@@ -95,7 +78,7 @@ cells.tibble.list <- lapply(1:length(intersection.tibble.list), function(li) {
     select(drug:measure,drug_type) %>%
     ungroup() %>% 
     group_by(experiment) %>%
-    mutate(prior_threshold = quantile(value,probs = opt$cell.type.prior), 
+    mutate(prior_threshold = quantile(value,probs = .9), 
            cell_type = ifelse(value>=prior_threshold,'sensitive','resistant')) %>%
     ungroup()
 })
@@ -105,7 +88,7 @@ names(cells.tibble.list) <- names(drugs.tibble.list)
 Fit distributions and use these to initialize EM
 
 ```{r}
-meas <- opt$sensitivity_measure[1]
+meas <- sensitivity_measure[1]
 drug_types_list <- lapply(drugs.tibble.list, function(tibb) {
   tibb %>%
     filter(measure==meas) %>%
@@ -368,18 +351,18 @@ posterior_cell_assignments <- do.call(bind_rows,posterior_cell_assignments_list)
 Save posteriors
 
 ```{r}
-saveRDS(object=posterior_drug_types,file=file.path(opt$log_dir,'posterior_drug_types.RDS'))
-saveRDS(object=posterior_drug_fits,file=file.path(opt$log_dir,'posterior_drug_fits.RDS'))
-saveRDS(object=posterior_drug_assignments,file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
-saveRDS(object=posterior_cell_assignments,file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
-saveRDS(object=intersection.fitted.list,file=file.path(opt$log_dir,'intersection.fitted.list.RDS'))
+saveRDS(object=posterior_drug_types,file=file.path(output_dir,'posterior_drug_types.RDS'))
+saveRDS(object=posterior_drug_fits,file=file.path(output_dir,'posterior_drug_fits.RDS'))
+saveRDS(object=posterior_drug_assignments,file=file.path(output_dir,'posterior_drug_assignments.RDS'))
+saveRDS(object=posterior_cell_assignments,file=file.path(output_dir,'posterior_cell_assignments.RDS'))
+saveRDS(object=intersection.fitted.list,file=file.path(output_dir,'intersection.fitted.list.RDS'))
 ```
 
 Format data frame with posterior information
 
 ```{r}
-posterior_cell_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
-posterior_drug_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
+posterior_cell_assignments <- readRDS(file=file.path(output_dir,'posterior_cell_assignments.RDS'))
+posterior_drug_assignments <- readRDS(file=file.path(output_dir,'posterior_drug_assignments.RDS'))
 posterior <- posterior_cell_assignments %>%
   select(drug, cell, experiment, drug_type, cell_type, posterior, likelihood, value) %>%
   rename(cell_type_posterior=posterior,
@@ -399,5 +382,5 @@ posterior <- posterior_cell_assignments %>%
   mutate(drug_type_posterior = ifelse(drug_type == 'broad', 1-drug_type_posterior,drug_type_posterior)) %>%
   rename(posterior_probability_sensitive = cell_type_posterior,
          posterior_probability_targeted = drug_type_posterior)
-saveRDS(object=posterior,file=file.path(opt$log_dir,'posterior.formatted.RDS'))
+saveRDS(object=posterior,file=file.path(output_dir,'posterior.formatted.RDS'))
 ```

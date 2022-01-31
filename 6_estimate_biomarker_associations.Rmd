@@ -15,51 +15,36 @@ library(PharmacoGx)
 Set options 
 
 ```{r}
-# <- "CCLE_GDSC1000_CTRPv2_FIMM_gCSI"
-comparison <- 'CCLE_GDSC'
-min_posterior_probability_sensitive <- .5 # minimum posterior probability for denoting a cell is sensitive
+comparison <- 'CCLE_GDSC' # CLE_GDSC1000_CTRPv2_FIMM_gCSI
+pset_dir <- file.path('~/Downloads', 'PSets')
+posteriors_dir <- file.path('~/Downloads','results')
 use_all_features <- TRUE # use all available features (TRUE) or restrict to features with a previously-documented association (FALSE)
 downsample_features <- TRUE # downsample to 5K most variable features (TRUE, recommended)
 feature.types <- c("rna") # mutation fusion cnv rna rna2 rnaseq
 impute_with_mean <- TRUE # if a feature exists for some cells but not others, replace the missings with the mean
 mean_common_cells <- TRUE # reduce joint dataset to mean sensitivity measure 
-include_individual_posteriors <- TRUE # for individual study comparisons, should the posterior fit via only that dataset be included (TRUE) or should it be compared to the joint fit posterior (FALSE)z
+include_individual_posteriors <- TRUE # for individual study comparisons, should the posterior fit via only that dataset be included (TRUE) or should it be compared to the joint fit posterior (FALSE)
 individual_study_measures <- c('waterfall','naive','auc_recomputed','posterior_probability_sensitive','cell_type')
 joint_study_measures <- c('naive','auc_recomputed','posterior_probability_sensitive','cell_type')
-base_log_dir <- paste(comparison,'biomarkers',feature.types[1],sep='_')
-dir.create(base_log_dir,showWarnings = FALSE)
+output_dir <- paste(comparison,'biomarkers',feature.types[1],sep='_')
+dir.create(output_dir,showWarnings = FALSE, recursive=TRUE)
 ```
 
 Load posteriors
 
 ```{r}
-if (!run_on_cluster) {
-  if (include_individual_posteriors) {
-    individual_posteriors <- readRDS(file.path('~/Desktop/Concordance/tidyPharmaco',
-                                               paste(comparison,'_fit_p60',sep=''),
-                                               'posterior.formatted.RDS'))
-  }
-  joint_posteriors <- readRDS(file.path('~/Desktop/Concordance/tidyPharmaco',
-                                        paste(comparison,'_fit_joint',sep=''),
-                                        'posterior.formatted.RDS')) 
-  gene_drug_asociations <- read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "mutation") %>%
-    as_tibble() %>%
-    bind_rows(read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "copy_number_variation"),
-              read_excel('~/Desktop/Concordance/PSets/gene_drug_asociations.xlsx', sheet = "expression"))
-} else {
-  if (include_individual_posteriors) {
-    individual_posteriors <- readRDS(file.path('~/concordance',
-                                               paste(comparison,'_fit_p60',sep=''),
-                                               'posterior.formatted.RDS'))
-  }
-  joint_posteriors <- readRDS(file.path('~/concordance',
-                                        paste(comparison,'_fit_joint',sep=''),
-                                        'posterior.formatted.RDS'))
-  gene_drug_asociations <- read_excel('~/concordance/PSets/gene_drug_asociations.xlsx', sheet = "mutation") %>%
-    as_tibble() %>%
-    bind_rows(read_excel('~/concordance/PSets/gene_drug_asociations.xlsx', sheet = "copy_number_variation"),
-              read_excel('~/concordance/PSets/gene_drug_asociations.xlsx', sheet = "expression"))
+if (include_individual_posteriors) {
+  individual_posteriors <- readRDS(file.path(posteriors_dir,
+                                             paste(comparison,'_fit_within_study',sep=''),
+                                             'posterior.formatted.RDS'))
 }
+joint_posteriors <- readRDS(file.path(posteriors_dir,
+                                      paste(comparison,'_fit_across_study',sep=''),
+                                      'posterior.formatted.RDS')) 
+gene_drug_asociations <- read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "mutation") %>%
+  as_tibble() %>%
+  bind_rows(read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "copy_number_variation"),
+            read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "expression"))
 if (include_individual_posteriors) {
   all_posteriors <- individual_posteriors %>% 
     mutate(Model_fit = 'individual') %>%
@@ -125,11 +110,7 @@ Set up X and Y data matrices, one per study
 rez <- list()
 for (dataset in datasets) {
   print(dataset)
-  if (!run_on_cluster) {
-    load(file.path('~/Desktop/Concordance/PSets',paste(dataset,'RData',sep='.')))
-  } else {
-    load(file.path('~/concordance/PSets',paste(dataset,'RData',sep='.')))
-  }
+  load(file.path(pset_dir,paste(dataset,'RData',sep='.')))
   eval(parse(text = paste('tempPset <- ',dataset,sep='')))
   print(paste(dataset, 'available features:',paste(mDataNames(tempPset),collapse=' '), sep=' '))
   y_new_temp <- summarizeSensitivityProfiles(tempPset, sensitivity.measure = 'auc_recomputed', summary.stat = 'median', verbose = FALSE) %>%
@@ -243,14 +224,14 @@ for (dataset in datasets) {
                filter(Model_fit == 'individual') %>% 
                select(-Model_fit) %>%
                distinct(),by=c('cell','experiment','drug')) %>% 
-      mutate(cell_type = case_when(posterior_probability_sensitive > min_posterior_probability_sensitive ~ 'sensitive',
+      mutate(cell_type = case_when(posterior_probability_sensitive > .5 ~ 'sensitive',
                                TRUE ~ 'resistant')) 
   } else {
     rez[[dataset]] <- rez[[dataset]] %>%
       inner_join(posterior %>% 
              select(-Model_fit) %>%
              distinct(),by=c('cell','experiment','drug')) %>% 
-      mutate(cell_type = case_when(posterior_probability_sensitive > min_posterior_probability_sensitive ~ 'sensitive',
+      mutate(cell_type = case_when(posterior_probability_sensitive > .5 ~ 'sensitive',
                              TRUE ~ 'resistant')) 
   }
   eval(parse(text=paste('rm(',dataset,',tempPset, x_new, joined, y_new_temp)',sep='')))
@@ -370,7 +351,7 @@ for (drug_for_biomarkers in all_drugs) {
                    distinct(), by=c('cell','drug')) %>%
       distinct() %>%
       mutate(naive = ifelse(auc_recomputed>naive_cutoff,'sensitive','resistant')) %>%
-      mutate(cell_type = case_when(posterior_probability_sensitive > min_posterior_probability_sensitive ~ 'sensitive',
+      mutate(cell_type = case_when(posterior_probability_sensitive > .5 ~ 'sensitive',
                                  TRUE ~ 'resistant')) %>%
       group_by(cell) %>%
       mutate(rownum = row_number()) %>%
@@ -397,7 +378,7 @@ for (drug_for_biomarkers in all_drugs) {
                    distinct(), by=c('cell','drug', 'experiment')) %>%
       distinct() %>%
       mutate(naive = ifelse(auc_recomputed>naive_cutoff,'sensitive','resistant')) %>%
-      mutate(cell_type = case_when(posterior_probability_sensitive > min_posterior_probability_sensitive ~ 'sensitive',
+      mutate(cell_type = case_when(posterior_probability_sensitive > .5 ~ 'sensitive',
                                  TRUE ~ 'resistant')) %>%
       group_by(cell) %>%
       mutate(rownum = row_number()) %>%
@@ -489,6 +470,6 @@ all_effect_sizes <- all_effect_sizes %>%
   replace_na(list(isKnown = FALSE,
                   logFC=0,
                   P.val=1))
-write_csv(all_effect_sizes, path=file.path(base_log_dir, 'all_effect_sizes.csv'), 
+write_csv(all_effect_sizes, path=file.path(output_dir, 'all_effect_sizes.csv'), 
               col_names = TRUE, append = FALSE)
 ```

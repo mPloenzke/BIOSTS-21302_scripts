@@ -25,10 +25,10 @@ Function definitions
 Specify file paths and load data sets
 
 ```{r}
-input_path <- '~/Downloads/Pharmacogenomics/PSets'
-output_path <- '~/Downloads/Pharmacogenomics'
-load(file.path(input_path,'CCLE.RData'))
-load(file.path(input_path,'GDSC.RData'))
+pset_dir <- '~/Downloads/PSets'
+output_dir <- '~/Downloads'
+load(file.path(pset_dir,'CCLE.RData'))
+load(file.path(pset_dir,'GDSC.RData'))
 ```
 
 Find common cells and drugs between CCLE and GDSC
@@ -168,7 +168,7 @@ p2 <- tdat2 %>%
   ggtitle(paste(paste('Cell ID:',cell2,sep=' '), paste('viability to compound:', dr,sep=' '),sep=' '))
 
 sfig <- plot_grid(p1, p2, labels = c('a)', 'b)'), label_size = 16, nrow = 1)
-ggsave(file.path(output_path, 'dose_response_curves.pdf'),width=12,height=6.5,units='in')
+ggsave(file.path(output_dir, 'dose_response_curves.pdf'),width=12,height=6.5,units='in')
 ```
 
 Supplementary figure comparison between sensitivity measures
@@ -257,5 +257,5 @@ p2 <- sens_measures %>%
   lims(x=c(0,1))
 
 sfig <- plot_grid(p1, p2, labels = c('a)', 'b)'), label_size = 16, nrow = 1)
-ggsave(file.path(output_path, 'aac_ic50_relationship.pdf'),width=12,height=6.5,units='in')
+ggsave(file.path(output_dir, 'aac_ic50_relationship.pdf'),width=12,height=6.5,units='in')
 ```

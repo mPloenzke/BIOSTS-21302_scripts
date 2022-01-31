@@ -12,6 +12,12 @@ Install necessary packages
 devtools::install_github("https://github.com/mPloenzke/PharmacoMixtuR")
 # manuscript results created using the following commit from the PharmacoGx package
 devtools::install_github('https://github.com/bhklab/PharmacoGx/tree/28f9c62f2b593207af984b337a36ac441a390bc7',INSTALL_opts="--no-staged-install")
+#install.packages('tidyverse')
+#install.packages('cowplot')
+#install.packages('readxl')
+#install.packages('viridis')
+#install.packages('ggrepel')
+# also need biomaRt, Biobase, and limma from bioconductor
 ```
 
 Download PSets for CCLE and GDSC comparison
@@ -22,6 +28,7 @@ PharmacoGx::downloadPSet('GDSC')
 ```
 
 Download PSets for joint dataset
+     - Note where these download to, their paths will need to be referenced later
 
 ```{r}
 PharmacoGx::downloadPSet('GDSC1000')
