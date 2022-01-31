@@ -17,8 +17,8 @@ theme_set(theme_bw())
 
 Options.
 ```{r}
-results_dir <- '~/Downloads/Pharmacogenomics/results'
-output_dir <- '~/Downloads/Pharmacogenomics/Writeups/supplemental_figs/'
+results_dir <- '~/Downloads/results'
+output_dir <- '~/Downloads/supplemental_figs/'
 ```
 
 # Dose response curves and IC50 v AAC plots
@@ -28,7 +28,7 @@ output_dir <- '~/Downloads/Pharmacogenomics/Writeups/supplemental_figs/'
 # Pearson v Spearman (CCLE-GDSC-CTRP-FIMM-gCSI)
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_within_study/intersection.fitted.list.RDS'))
 twoway_agreement <- tibble()
 for (comp in names(intersection.fitted.list)) {
   tibb <- intersection.fitted.list[[comp]]
@@ -68,7 +68,7 @@ ggsave(file.path(output_dir, 'pearson_spearman_all_datasets.pdf'),width=14,heigh
 # Pearson v Spearman (PRISM-CTRP-GDSC)
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'PRISM_GDSC_CTRP_fit2/intersection.fitted.list.RDS')) # this one has zeros
+intersection.fitted.list <- readRDS(file.path(results_dir,'PRISM_GDSC_CTRP_zeros_included/intersection.fitted.list.RDS')) # this one has zeros
 twoway_agreement <- tibble()
 for (comp in names(intersection.fitted.list)) {
   tibb <- intersection.fitted.list[[comp]]
@@ -111,7 +111,7 @@ ggsave(file.path(output_dir, 'pearson_spearman_prism_datasets.pdf'),width=14,hei
 Mean comparison between two studies
 
 ```{r}
-mplot <- readRDS(file.path(results_dir, "CCLE_GDSC_fit_p60/posterior_drug_fits.RDS")) %>% 
+mplot <- readRDS(file.path(results_dir, "CCLE_GDSC_fit_within_study/posterior_drug_fits.RDS")) %>% 
   group_by(drug) %>% 
   filter(n_distinct(experiment)>1) %>% 
   ungroup() %>% 
@@ -155,7 +155,7 @@ mplot <- readRDS(file.path(results_dir, "CCLE_GDSC_fit_p60/posterior_drug_fits.R
 Variance comparison between two studies
 
 ```{r}
-vplot <- readRDS(file.path(results_dir, "CCLE_GDSC_fit_p60/posterior_drug_fits.RDS")) %>% 
+vplot <- readRDS(file.path(results_dir, "CCLE_GDSC_fit_within_study/posterior_drug_fits.RDS")) %>% 
   group_by(drug) %>% 
   filter(n_distinct(experiment)>1) %>% 
   ungroup() %>% 
@@ -205,7 +205,7 @@ ggsave(file.path(output_dir, 'mean_variance_CCLE_GDSC.pdf'),width=6,height=12,un
 # Spearman v Accuracy (CCLE-GDSC-CTRP-FIMM-gCSI)
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_within_study/intersection.fitted.list.RDS'))
 twoway_agreement <- tibble()
 for (comp in names(intersection.fitted.list)) {
   tibb <- intersection.fitted.list[[comp]]
@@ -267,7 +267,7 @@ ggsave(file.path(output_dir, 'spearman_accuracy_all_datasets.pdf'),width=14,heig
 Hex of rounded drug types.
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_p60/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC1000_gCSI_FIMM_CTRPv2_fit_within_study/intersection.fitted.list.RDS'))
 drug_types_agreement <- tibble()
 for (comp in names(intersection.fitted.list)) {
   curr_studies <- strsplit(comp,'_')[[1]]

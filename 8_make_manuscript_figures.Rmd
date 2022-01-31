@@ -19,8 +19,8 @@ theme_set(theme_bw())
 File paths 
 
 ```{r}
-results_dir <- '~/Downloads/Pharmacogenomics/results'
-output_dir <- '~/Downloads/Pharmacogenomics/Writeups/figs'
+results_dir <- '~/Downloads/results'
+output_dir <- '~/Downloads/figs'
 ```
 
 # Two-way posteriors comparison
@@ -28,11 +28,11 @@ output_dir <- '~/Downloads/Pharmacogenomics/Writeups/figs'
 Load posterior information for just CCLE and GDSC studies
 
 ```{r}
-intersection.tibble.list <- readRDS(file.path(results_dir, 'CCLE_GDSC_fit_p60/intersection.fitted.list.RDS'))
-posterior_drug_types <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_types.RDS'))
-posterior_drug_fits <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_fits.RDS'))
-posterior_drug_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_assignments.RDS')) %>% filter(iteration == max(iteration))
-posterior_cell_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_cell_assignments.RDS')) %>% filter(iteration == max(iteration))
+intersection.tibble.list <- readRDS(file.path(results_dir, 'CCLE_GDSC_fit_within_study/intersection.fitted.list.RDS'))
+posterior_drug_types <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_types.RDS'))
+posterior_drug_fits <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_fits.RDS'))
+posterior_drug_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_assignments.RDS')) %>% filter(iteration == max(iteration))
+posterior_cell_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_cell_assignments.RDS')) %>% filter(iteration == max(iteration))
 ```
 
 ## Crizotinib
@@ -349,7 +349,7 @@ ggsave(file.path(output_dir, 'posteriors.pdf'), width=12,height=6, units='in')
 Load intersection posterior (just CCLE and GDSC)
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/intersection.fitted.list.RDS'))
 ```
 
 Dug type
