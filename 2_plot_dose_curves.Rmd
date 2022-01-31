@@ -1,0 +1,261 @@
+---
+title: "Plot dose response curves"
+author: "Matt Ploenzke"
+output: html_document
+---
+
+The purpose of this markdown is to generate the dose response curves and sensitivity measure comparison in supplemental figures 1 and 2
+
+Packages
+
+```{r}
+library(PharmacoGx)
+library(tidyverse)
+library(cowplot)
+theme_set(theme_bw())
+```
+
+Function definitions
+
+```{r}
+  GetSupportVec <- function(x, output_length = 1001) {return(seq(from = min(x), to = max(x), length.out = output_length))}
+  Hill <- function(x, pars) {return(pars[2] + (1 - pars[2]) / (1 + (10 ^ x / 10 ^ pars[3]) ^ pars[1]))}
+```
+
+Specify file paths and load data sets
+
+```{r}
+input_path <- '~/Downloads/Pharmacogenomics/PSets'
+output_path <- '~/Downloads/Pharmacogenomics'
+load(file.path(input_path,'CCLE.RData'))
+load(file.path(input_path,'GDSC.RData'))
+```
+
+Find common cells and drugs between CCLE and GDSC
+
+```{r}
+genes <- intersect(fNames(GDSC, "rna"),fNames(CCLE,"rna"))
+common <- intersectPSet(list('CCLE'=CCLE,'GDSC'=GDSC),intersectOn=c("cell.lines", "drugs"), strictIntersect=TRUE)
+drugs <- drugNames(common[[1]])
+cells <- intersectList(phenoInfo(common$CCLE, "rna")$cellid,
+                         phenoInfo(common$GDSC, "rna2")$cellid,
+                         unique(sensitivityInfo(common$CCLE)$cellid), 
+                         unique(sensitivityInfo(common$GDSC)$cellid))
+ccle.gdsc <- intersectPSet(pSets = list("CCLE"=common$CCLE, "GDSC"=common$GDSC), intersectOn = c("cell.lines", "drugs"), cells=cells)
+```
+
+Supplementary figure sensitive and resistant dose response curves
+
+```{r}
+sens.info <- as_tibble(ccle.gdsc$CCLE@sensitivity$info) %>%
+  filter(drugid %in% drugs,
+         cellid %in% cells)
+concentrations <- sens.info %>% 
+  filter(row_number()==1) %>%
+  select(-cellid,-drugid,-nbr.conc.tested,-duration_h) %>%
+  gather() %>%
+  pull()
+sens.curves <-  rownames_to_column(as.data.frame(ccle.gdsc$CCLE@sensitivity$raw)) %>%
+  as_tibble() %>% 
+  separate(rowname,into=c('cellid','drugid'),sep='_') %>%
+  filter(drugid %in% drugs,
+         cellid %in% cells)
+dr <- 'lapatinib'
+drug.curves <- sens.curves %>% filter(drugid==dr)
+# sensitive
+cell1 <- 'NCI-H1666'
+tdat1 <- drug.curves %>%
+  filter(cellid == cell1) %>%
+  select(ends_with('Viability')) %>% 
+  gather() %>%
+  mutate(concentrations = concentrations,
+         group=1,
+         value = as.numeric(value),
+         islarge = ifelse(value>100,1,ifelse(value<0,5,19)))
+ic50_1<- CCLE@sensitivity$profiles %>% 
+  rownames_to_column() %>% 
+  as_tibble()  %>% 
+  filter(str_detect(tolower(rowname), dr)) %>% 
+  filter(str_detect(rowname, cell1)) %>%
+  separate(rowname, into=c('dd','drug','cell'), sep='_') %>% 
+  pull(ic50_recomputed)
+print(computeAUC(tdat1$concentrations, tdat1$value))
+fit1 <- logLogisticRegression(conc=tdat1$concentrations,viability=tdat1$value,
+                                conc_as_log = FALSE,family='normal',trunc=TRUE)
+log10_x_vals_1 <- GetSupportVec(log10(tdat1$concentrations))
+yy1 <- Hill(log10_x_vals_1, pars = c(fit1$HS,
+                                     fit1$E_inf/100, 
+                                     log10(fit1$EC50))) * 100
+preds1 <- Hill(log10(tdat1$concentrations),pars = c(fit1$HS,
+                                                   fit1$E_inf/100, 
+                                                    log10(fit1$EC50))) * 100
+preddat1 <- tibble(value=yy1,concentrations=10^log10_x_vals_1,group=1)
+p1 <- tdat1 %>%
+  ggplot(aes(x=concentrations,y=value)) +
+    geom_point() + 
+    geom_line(data=preddat1,aes(x=concentrations,y=value,group=1),show.legend=FALSE) + 
+    geom_vline(aes(xintercept=ic50_1),lty=3,lwd=.5,alpha=.5) + 
+    geom_ribbon(data=preddat1,aes(x=concentrations,ymin=value,ymax=100,group=1),alpha=.25) +
+    geom_hline(aes(yintercept=0), lty=1,color='grey') + 
+    geom_hline(aes(yintercept=100), lty=1, color='grey') + 
+    scale_x_continuous(trans='log10') + 
+    labs(y = "Viability",
+         x = expression(paste("Dose Concentration (", log10, " ", mu, "M)",sep=''))) + 
+    scale_y_continuous(limits=c(ifelse(min(tdat1$value)<0,min(tdat1$value),0),
+                                ifelse(max(tdat1$value)>100,max(tdat1$value),100)),
+                       breaks=seq(0,100,by=20)) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        plot.margin = margin(.5,.5,.5,.5,'cm')) +
+  ggtitle(paste(paste('Cell ID:',cell1,sep=' '), paste('viability to compound:', dr,sep=' '),sep=' '))
+# resistant 
+cell2 <- 'HCC1187'
+tdat2 <- drug.curves %>%
+  filter(cellid == cell2) %>%
+  select(ends_with('Viability')) %>% 
+  gather() %>%
+  mutate(concentrations = concentrations,
+         group=1,
+         value = as.numeric(value),
+         islarge = ifelse(value>100,1,ifelse(value<0,5,19)))
+ic50_2 <- CCLE@sensitivity$profiles %>% 
+  rownames_to_column() %>% 
+  as_tibble()  %>% 
+  filter(str_detect(tolower(rowname), dr)) %>% 
+  filter(str_detect(rowname, cell2)) %>%
+  separate(rowname, into=c('dd','drug','cell'), sep='_') %>%
+  pull(ic50_recomputed)
+print(computeAUC(tdat2$concentrations, tdat2$value))
+fit2 <- logLogisticRegression(conc=tdat2$concentrations,viability=tdat2$value,
+                                conc_as_log = FALSE,family='normal',trunc=TRUE)
+log10_x_vals_2 <- GetSupportVec(log10(tdat2$concentrations))
+yy2 <- Hill(log10_x_vals_1, pars = c(fit2$HS,
+                                     fit2$E_inf/100, 
+                                     log10(fit2$EC50))) * 100
+preds2 <- Hill(log10(tdat2$concentrations),pars = c(fit2$HS,
+                                                   fit2$E_inf/100, 
+                                                    log10(fit2$EC50))) * 100
+preddat2 <- tibble(value=yy2,concentrations=10^log10_x_vals_2,group=1)
+p2 <- tdat2 %>%
+  ggplot(aes(x=concentrations,y=value)) +
+    geom_point() + 
+    geom_line(data=preddat2,aes(x=concentrations,y=value,group=1),show.legend=FALSE) + 
+    geom_vline(aes(xintercept=ic50_2),lty=3,lwd=.5,alpha=.5) + 
+    geom_ribbon(data=preddat2,aes(x=concentrations,ymin=value,ymax=100,group=1),alpha=.25) +
+    geom_hline(aes(yintercept=0), lty=1,color='grey') + 
+    geom_hline(aes(yintercept=100), lty=1, color='grey') + 
+    scale_x_continuous(trans='log10') + 
+    labs(y = "Viability",
+         x = expression(paste("Dose Concentration (", log10, " ", mu, "M)",sep=''))) + 
+    scale_y_continuous(limits=c(ifelse(min(tdat2$value)<0,min(tdat2$value),0),
+                                ifelse(max(tdat2$value)>100,max(tdat2$value),100)),
+                       breaks=seq(0,100,by=20)) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        plot.margin = margin(.5,.5,.5,.5,'cm')) +
+  ggtitle(paste(paste('Cell ID:',cell2,sep=' '), paste('viability to compound:', dr,sep=' '),sep=' '))
+
+sfig <- plot_grid(p1, p2, labels = c('a)', 'b)'), label_size = 16, nrow = 1)
+ggsave(file.path(output_path, 'dose_response_curves.pdf'),width=12,height=6.5,units='in')
+```
+
+Supplementary figure comparison between sensitivity measures
+
+```{r}
+sens.info <- as_tibble(CCLE@sensitivity$info) %>% filter(drugid %in% c('Crizotinib','17-AAG'))
+ec50 <- tibble()
+for (irow in 1:nrow(sens.info)) {
+  curr_row <- sens.info %>% filter(row_number()==irow)
+  concentrations <- curr_row %>%
+    select(-cellid,-drugid,-nbr.conc.tested,-duration_h) %>%
+    gather() %>%
+    pull()
+  sens.curves <-  rownames_to_column(as.data.frame(CCLE@sensitivity$raw)) %>%
+    as_tibble() %>% 
+    separate(rowname,into=c('dd','drugid','cellid'),sep='_') %>%
+    select(-dd) %>%
+    mutate(drugid = case_when(drugid == 'PF2341066' ~ 'Crizotinib', TRUE ~ drugid)) %>%
+    filter(tolower(drugid) == tolower(gsub('-','',curr_row$drugid)),
+           tolower(cellid) == tolower(curr_row$cellid))
+  if (nrow(sens.curves)==0) {next()}
+  tdat <- sens.curves %>%
+    select(ends_with('Viability')) %>% 
+    gather() %>%
+    mutate(concentrations = concentrations,
+           group=1,
+           value = as.numeric(value),
+           islarge = ifelse(value>100,1,ifelse(value<0,5,19)))
+  fit1 <- logLogisticRegression(conc=tdat$concentrations,viability=tdat$value,
+                                  conc_as_log = FALSE,family='normal',trunc=TRUE) %>%
+    as_tibble()
+  curr_row %>% 
+    select(drugid, cellid) %>% 
+    bind_cols(fit1) %>% 
+    bind_rows(ec50) -> ec50
+}
+
+
+sens_measures <- CCLE@sensitivity$profiles %>% 
+  rownames_to_column() %>% 
+  as_tibble()  %>% 
+  separate(rowname, into=c('dd','drug','cell'), sep='_') %>%
+  mutate(drug = case_when(drug == 'PF2341066' ~ 'Crizotinib', TRUE ~ drug)) %>%
+  mutate(drug=tolower(drug), cell=tolower(cell)) %>% 
+  inner_join(ec50 %>% mutate(drugid=gsub('-','',tolower(drugid)), cellid=tolower(cellid)), 
+             by=c('drug'='drugid','cell'='cellid'))
+
+p1 <- sens_measures %>%
+  filter(drug == 'crizotinib') %>% 
+  mutate(ic50_recomputed = pmin(20,ic50_recomputed)) %>% 
+  ggplot(aes(x=auc_recomputed,y=ic50_recomputed)) +
+  geom_point(shape=4) + 
+  scale_y_continuous(trans = 'log10') +
+  labs(y = expression(paste("IC50 (", log10, " ", mu, "M)",sep='')),
+       x = 'AAC',
+       title='Sensitivity measures for targeted drug Critozitinib') + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        plot.margin = margin(.5,.5,.5,.5,'cm')) +
+  lims(x=c(0,1))
+
+p2 <- sens_measures %>%
+  filter(drug == '17aag') %>% 
+  mutate(ic50_recomputed = pmin(20,ic50_recomputed)) %>% 
+  ggplot(aes(x=auc_recomputed,y=ic50_recomputed)) +
+  geom_point(shape=4) + 
+  scale_y_continuous(trans = 'log10') + 
+  labs(y = expression(paste("IC50 (", log10, " ", mu, "M)",sep='')),
+       x = 'AAC',
+       title='Sensitivity measures for broad effect drug 17-AAG') + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        plot.margin = margin(.5,.5,.5,.5,'cm')) +
+  lims(x=c(0,1))
+
+sfig <- plot_grid(p1, p2, labels = c('a)', 'b)'), label_size = 16, nrow = 1)
+ggsave(file.path(output_path, 'aac_ic50_relationship.pdf'),width=12,height=6.5,units='in')
+```

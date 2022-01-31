@@ -1,0 +1,32 @@
+---
+title: "Download data"
+author: "Matt Ploenzke"
+output: html_document
+---
+
+The purpose of this markdown is to download the necessary PSets for the analysis
+
+Install necessary packages
+
+```{r}
+devtools::install_github("https://github.com/mPloenzke/PharmacoMixtuR")
+# manuscript results created using the following commit from the PharmacoGx package
+devtools::install_github('https://github.com/bhklab/PharmacoGx/tree/28f9c62f2b593207af984b337a36ac441a390bc7',INSTALL_opts="--no-staged-install")
+```
+
+Download PSets for CCLE and GDSC comparison
+
+```{r}
+PharmacoGx::downloadPSet('CCLE')
+PharmacoGx::downloadPSet('GDSC')
+```
+
+Download PSets for joint dataset
+
+```{r}
+PharmacoGx::downloadPSet('GDSC1000')
+PharmacoGx::downloadPSet('FIMM')
+PharmacoGx::downloadPSet('gCSI')
+PharmacoGx::downloadPSet('GDSC')
+PharmacoGx::downloadPSet('CTRPv2')
+```

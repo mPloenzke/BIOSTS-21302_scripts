@@ -1,0 +1,581 @@
+---
+title: "Estimate posteriors across PRISM"
+author: "Matt Ploenzke"
+output: html_document
+---
+
+Packages
+
+```{r}
+library(tidyverse)
+library(PharmacoMixtuR)
+```
+
+Set options
+
+```{r}
+opt <- list()
+opt$datasets <- c('PRISM','GDSC','CTRP')
+opt$sensitivity_measure <- 'auc'
+opt$log_dir <- paste(paste(opt$datasets,collapse='_'),'fit',sep='_')
+# Prior specifications denoting cell sensitivity and proportion of drugs broadly-active:
+opt$prior.sensitive <- .6 # prior specification denoting cell is sensitive if greater than this value
+opt$prior.broadly.active <- 'median_mad' #median .05 # prior specification denoting drug is broadly-active if probability cell is sensitive is greater than value
+opt$exclude_zeros <- FALSE 
+```
+
+Set up log directory
+
+```{r}
+dir.create(opt$log_dir,showWarnings = FALSE)
+capture.output(opt, file = file.path(opt$log_dir,'model_Opts.csv'))
+```
+
+Name fixes
+
+```{r}
+name_fixes <- list("gw-843682x" = "BRD-K90382497", "jq1-(+)" = "BRD-K54606188", "sb-525334" = "BRD-K37720887", 
+                   "nutlin-3" = "BRD-A12230535", "fk-866" = "BRD-K58550667", 'cisplatin' = "BRD-K69172251", 
+                   "tipifarnib" = "BRD-K62965247","jq1-(+)" = "BRD-K54606188","idelalisib" = "BRD-K60866521",
+                   "i-bet-762" = "BRD-K08109215","zstk-474" = "BRD-K63068307","5-fluorouracil" = "BRD-K24844714",
+                   "mitomycin-c" = "BRD-A48237631","fk-866" = "BRD-K58550667","tozasertib" = "BRD-K59369769",
+                   'cisplatin' = "BRD-K69172251","gw-843682x" = "BRD-K90382497","tipifarnib" = "BRD-K62965247",
+                   "jq1-(+)" = "BRD-K54606188","idelalisib" = "BRD-K60866521","i-bet-762" = "BRD-K08109215",
+                   "sb-525334" = "BRD-K37720887","zstk-474" = "BRD-K63068307","nutlin-3" = "BRD-A12230535",
+                   "5-fluorouracil" = "BRD-K24844714","mitomycin-c" = "BRD-A48237631","fk-866" = "BRD-K58550667",
+                   "tozasertib" = "BRD-K59369769")
+```
+
+Load prism
+ - Files downloaded from DepMap
+    - https://depmap.org/portal/download/all/?release=PRISM+Repurposing+19Q4&file=secondary-screen-dose-response-curve-parameters.csv
+    - https://depmap.org/portal/download/all/?release=Sanger+GDSC1+and+GDSC2&file=sanger-dose-response.csv
+    - https://depmap.org/portal/download/all/?release=CTRP+CTD%5E2&file=CTRPv2.0_2015_ctd2_ExpandedDataset.zip
+  
+```{r}
+prism <- read.csv(file.path(base_dir,"prism/secondary-screen-dose-response-curve-parameters.csv"), stringsAsFactors=FALSE) %>% 
+  as_tibble() %>%
+  select(broad_id, depmap_id, ccle_name, screen_id, name, moa, target, disease.area, auc, row_name, passed_str_profiling) %>% 
+  mutate(name = tolower(name))
+for (nname in 1:length(name_fixes)) {
+  prism <- prism %>%
+    mutate(name = case_when(broad_id == name_fixes[nname] ~ names(name_fixes)[nname],
+                            TRUE ~ name))
+}
+```
+
+Cell line name concordance
+
+```{r}
+cell_concordance <- prism %>%
+  distinct(ccle_name, row_name)
+```
+
+Format PRISM
+
+```{r}
+prism <- prism %>%
+  filter(screen_id == 'HTS002') %>%
+  rename(drug = name, 
+         cell = row_name, 
+         value = auc) %>%
+  mutate(experiment = 'PRISM',
+         measure = opt$sensitivity_measure) %>%
+  select(drug, cell, value, experiment, measure) %>%
+  distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
+  na.omit() %>%
+  filter(drug!='',cell!='') %>% 
+  mutate(value = 1-pmin(value,1))
+```
+
+Load GDSC
+
+```{r}
+gdsc <- read.csv(file.path(base_dir, 'prism/sanger-dose-response.csv'), stringsAsFactors = FALSE) %>% 
+  as_tibble() %>%
+  select(DATASET, COSMIC_ID, DRUG_ID, ARXSPAN_ID, DRUG_NAME, BROAD_ID, AUC_PUBLISHED, auc) %>%
+  rename_all(tolower) %>%
+  mutate(drug_name = tolower(drug_name)) %>%
+  rename(name = drug_name)
+for (nname in 1:length(name_fixes)) {
+  gdsc <- gdsc %>%
+    mutate(name = case_when(broad_id == name_fixes[nname] ~ names(name_fixes)[nname],
+                            TRUE ~ name))
+}
+gdsc <- gdsc %>%
+  rename(drug = name, 
+         cell = arxspan_id, 
+         value = auc) %>%
+  mutate(experiment = 'GDSC',
+         measure = opt$sensitivity_measure) %>%
+  arrange(desc(dataset)) %>%
+  select(drug, cell, value, experiment, measure) %>%
+  distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
+  na.omit() %>%
+  filter(drug!='') %>%
+  mutate(value = 1-value)
+```
+
+Load CTRP
+
+```{r}
+ctrp <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.data.curves_post_qc.txt'),stringsAsFactors = FALSE) %>%
+  as_tibble() %>%
+  select(experiment_id, area_under_curve, master_cpd_id, conc_pts_fit) %>%
+  mutate(area_under_curve = area_under_curve/conc_pts_fit) %>%
+  select(-conc_pts_fit)
+cpds <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_compound.txt'),stringsAsFactors = FALSE) %>%
+  as_tibble()
+experis <-  read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_experiment.txt'),stringsAsFactors = FALSE) %>%
+  as_tibble()
+cellls <- read.delim(file.path(base_dir,'prism/CTRPv2.0_2015_ctd2_ExpandedDataset/v20.meta.per_cell_line.txt'),stringsAsFactors = FALSE) %>%
+  as_tibble()
+ctrp <- ctrp %>%
+  left_join(cpds %>% select(master_cpd_id, cpd_name, broad_cpd_id), by=c('master_cpd_id')) %>%
+  left_join(experis %>% select(experiment_id, master_ccl_id), by=c('experiment_id')) %>%
+  left_join(cellls %>% select(master_ccl_id, ccl_name, ccle_primary_site), by=c('master_ccl_id'))  %>%
+  unite(ccle_name, ccl_name, ccle_primary_site,sep='_',remove = TRUE) %>%
+  mutate(ccle_name = tolower(ccle_name)) %>%
+  mutate(cpd_name = tolower(cpd_name)) %>%
+  rename(name = cpd_name)
+for (nname in 1:length(name_fixes)) {
+  ctrp <- ctrp %>%
+    mutate(name = case_when(broad_cpd_id == name_fixes[nname] ~ names(name_fixes)[nname],
+                            TRUE ~ name))
+}
+rm(cpds, experis, cellls)
+ctrp <- ctrp %>% 
+  rename(drug = name, 
+         cell = ccle_name, 
+         value = area_under_curve) %>%
+  mutate(experiment = 'CTRP',
+         measure = opt$sensitivity_measure) %>%
+  select(drug, cell, value, experiment, measure) %>%
+  distinct(drug, cell, experiment, measure, .keep_all = TRUE) %>%
+  na.omit() %>% 
+  filter(drug!='') %>%
+  mutate(value = 1-pmin(value,1)) %>%
+  rename(ccle_name = cell) %>%
+  mutate(ccle_name = tolower(ccle_name)) %>%
+  left_join(cell_concordance %>% mutate(ccle_name = tolower(ccle_name)), by='ccle_name')  %>%
+  na.omit() %>% 
+  rename(cell = row_name) %>%
+  select(-ccle_name) %>%
+  select(drug, cell, value, experiment, measure)
+```
+
+Cat these together into a list for individual fits
+
+```{r}
+sensitivity.tibble.list <- list(PRISM=prism, CTRP=ctrp, GDSC=gdsc)
+if (opt$exclude_zeros) {
+  sensitivity.tibble.list <- lapply(sensitivity.tibble.list, function(tt) {
+    tt %>% filter(value > 0)
+  })
+}
+```
+
+Cat these into a list for the intersection cells and drugs
+
+```{r}
+full.intersection <- ctrp %>% 
+  bind_rows(prism, gdsc) %>% 
+  group_by(cell, drug) %>% 
+  filter(n_distinct(experiment)==3) %>%
+  ungroup()
+intersection.tibble.list <- list('CTRP_PRISM' = full.intersection %>% filter(experiment %in% c('CTRP', 'PRISM')),
+                                 'GDSC_PRISM' = full.intersection %>% filter(experiment %in% c('GDSC', 'PRISM')),
+                                 'CTRP_GDSC' = full.intersection %>% filter(experiment %in% c('CTRP', 'GDSC')))
+```
+
+Remove PSets
+
+```{r}
+rm(prism, ctrp, name_fixes, gdsc, nname)
+```
+
+Initialize drug and cell assignments
+
+```{r}
+drugs.tibble.list <- lapply(sensitivity.tibble.list, function(li) {
+  drug_dat <- li %>% 
+    mutate(all_median = quantile(value,opt$prior.sensitive),
+           all_mad = stats::mad(value),
+           drug=as.factor(drug)) %>% 
+    group_by(drug) %>% 
+    mutate(median=median(value),
+           mad=stats::mad(value),
+           all_median=first(all_median),
+           all_mad=first(all_mad)) %>%
+    ungroup() %>%
+    mutate(drug_type = ifelse(median<=all_median & mad<=all_mad,'targeted','broad')) %>%
+    distinct(drug, drug_type, all_median, all_mad, median, median, mad)
+  li %>% 
+    left_join(drug_dat, by='drug') %>%
+    mutate(sensitive = ifelse(value > all_median, 1,0)) %>%
+    group_by(drug, measure, drug_type) %>%
+    summarise(p_prior = mean(sensitive),
+              sensitive = sum(sensitive),
+              cell_count = n()) %>%
+    ungroup() %>% 
+    select(drug, measure, p_prior, sensitive, cell_count, drug_type)
+})
+cells.tibble.list <- lapply(1:length(sensitivity.tibble.list), function(li) {
+  sensitivity.tibble.list[[li]] %>% 
+    left_join(drugs.tibble.list[[li]], by=c('drug','measure')) %>% 
+    select(drug:measure,drug_type) %>%
+    ungroup() %>% 
+    group_by(experiment) %>%
+    mutate(prior_threshold = quantile(value,probs = opt$prior.sensitive), 
+           cell_type = ifelse(value>=prior_threshold,'sensitive','resistant')) %>%
+    ungroup()
+})
+names(cells.tibble.list) <- names(drugs.tibble.list)
+```
+
+Fit distributions and use these to initialize EM
+
+```{r}
+meas <- opt$sensitivity_measure
+drug_types_list <- lapply(drugs.tibble.list, function(tibb) {
+  tibb %>%
+    filter(measure==meas) %>%
+    group_by(drug_type) %>%
+    do(mutate(fit_bb_mle(.$sensitive, .$cell_count), number = nrow(.))) %>%
+    ungroup() %>%
+    mutate(drug_type_prior = number / sum(number))
+})
+targetted_drug_fits_list <- lapply(cells.tibble.list, function(tibb) {
+  ttibb <- tibb %>%
+    filter(measure==meas) %>%
+    mutate(value = ifelse(value==0,1e-3,value)) %>%
+    mutate(drug_type = 'targeted') %>%
+    group_by(drug, cell_type, drug_type, experiment) %>%
+    do(mutate(fit_beta_mle(.$value),number = nrow(.))) %>%
+    group_by(drug, drug_type, experiment) %>%
+    mutate(ndist=n_distinct(cell_type)) %>%
+    ungroup()
+  ttibb %>%
+    bind_rows(
+      ttibb %>% 
+        filter(ndist<2) %>% 
+        mutate(cell_type2 = case_when(cell_type=='resistant' ~ 'sensitive',cell_type=='sensitive' ~ 'resistant'),
+               cell_type=cell_type2,
+               number=0,
+               alpha=case_when(cell_type == 'resistant' ~ .5,
+                               cell_type == 'sensitive' ~ 50),
+               beta=case_when(cell_type == 'resistant' ~ 7.5,
+                              cell_type == 'sensitive' ~ 50)) %>%
+        select(-cell_type2)
+    ) %>%
+    group_by(drug, experiment) %>%       
+    mutate(targeted_cell_type_prior = number / sum(number)) %>%
+    ungroup() %>% 
+    select(-ndist)
+})
+broad_drug_fits_list <- lapply(cells.tibble.list, function(tibb) {
+  tibb %>%
+    filter(measure==meas) %>%
+    mutate(x=ifelse(value==0,1e-3,value)) %>%
+    group_by(drug, experiment) %>%
+    do(mutate(fit_beta_mle(.$x),
+              number = nrow(.),
+              broad_cell_type_prior = mean(.$value>=.$prior_threshold))) %>%
+    ungroup() %>% 
+    mutate(drug_type = 'broad') %>%
+    select(drug, drug_type, alpha, beta, number, broad_cell_type_prior, experiment)
+})
+targeted_drug_priors <- lapply(1:length(targetted_drug_fits_list), function(num) {
+  targetted_drug_fits_list[[num]] %>% 
+    rename(cell_type_prior = targeted_cell_type_prior) %>%
+    select(drug, drug_type, cell_type_prior, experiment, cell_type) %>%
+    mutate(drug_type = 'broad')
+})
+broad_drug_priors <- lapply(1:length(broad_drug_fits_list), function(num) {
+  broad_drug_fits_list[[num]] %>%
+    rename(cell_type_prior = broad_cell_type_prior) %>%
+    select(drug, drug_type, cell_type_prior, experiment) %>%
+    mutate(drug_type = 'targeted')
+})
+```
+
+Perform an expectation step
+
+```{r}
+targetted_cell_assignments_list <- lapply(1:length(targetted_drug_fits_list), function(num) {
+  targetted_drug_list <- unique(targetted_drug_fits_list[[num]]$drug)
+  targetted_cell_assignments <- lapply(targetted_drug_list, function(dr) {
+    cells.tibble.list[[num]] %>%
+      filter(drug == dr,measure==meas) %>%
+      select(drug:measure) %>%
+      mutate(drug_type = 'targeted') %>%
+      mutate(value=ifelse(value<1e-3,1e-3,value)) %>%
+      crossing(targetted_drug_fits_list[[num]] %>% filter(drug == dr) %>% select(-drug,-drug_type) %>% rename(experiment1=experiment)) %>%
+      filter(experiment==experiment1) %>% 
+      select(-experiment1) %>% 
+      mutate(median = qbeta(.5,alpha,beta),
+             likelihood = dbeta(value, alpha, beta)) %>% 
+      group_by(cell_type) %>%
+      mutate(max.likelihood=max(likelihood)) %>%
+      ungroup() %>%
+      mutate(likelihood = case_when(value>median & cell_type == 'sensitive' ~ max.likelihood-likelihood + max.likelihood, 
+                                    value<median & cell_type == 'resistant' ~ max.likelihood-likelihood + max.likelihood, 
+                                    TRUE~likelihood)) %>%
+      mutate(likelihood = targeted_cell_type_prior * likelihood) %>%
+      group_by(drug, cell, experiment) %>%
+      mutate(posterior=exp(log(likelihood)-log(sum(likelihood)))) %>% 
+      top_n(1, likelihood) %>%
+      ungroup()
+  })
+  do.call(bind_rows, targetted_cell_assignments)
+})
+broad_cell_assignments_list <- lapply(1:length(broad_drug_fits_list), function(num) {
+  cells.tibble.list[[num]] %>%
+      filter(drug %in% unique(broad_drug_fits_list[[num]]$drug),measure==meas) %>%
+      select(drug:measure) %>%
+      mutate(drug_type = 'broad') %>%
+      mutate(value=ifelse(value<1e-3,1e-3,value)) %>%
+      left_join(broad_drug_fits_list[[num]], by=c('drug','drug_type', 'experiment')) %>%
+      mutate(likelihood = dbeta(value, alpha, beta),
+             cell_type = ifelse((broad_cell_type_prior*pbeta(value, alpha, beta)) >
+                                  ((1-broad_cell_type_prior)*(1-pbeta(value, alpha, beta))),
+                                'sensitive','resistant'))
+})
+
+drugs.tibble.list <- lapply(1:length(drugs.tibble.list), function(num) {
+  targetteds <- drugs.tibble.list[[num]] %>%
+    filter(measure==meas) %>%
+    select(drug, measure) %>%
+    right_join(targetted_cell_assignments_list[[num]] %>% select(drug, cell, cell_type, likelihood), by='drug') %>% 
+    group_by(drug, measure) %>%
+    summarise(sensitive = sum(cell_type=='sensitive'),
+              cell_count = n()) %>%
+    ungroup() %>% 
+    mutate(type='targeted')
+  broads <- drugs.tibble.list[[num]] %>%
+    filter(measure==meas) %>%
+    select(drug, measure) %>%
+    right_join(broad_cell_assignments_list[[num]] %>% select(drug, cell, cell_type), by='drug') %>% 
+    group_by(drug, measure) %>%
+    summarise(sensitive = sum(cell_type=='sensitive'),
+              cell_count = n()) %>%
+    ungroup() %>%
+    mutate(type='broad')
+  bind_rows(targetteds, broads)
+})
+
+drug_assignments_list <- lapply(1:length(drugs.tibble.list), function(num) {
+  drugs.tibble.list[[num]] %>%
+    filter(measure==meas) %>%
+    rename(drug_type = type) %>%
+    right_join(drug_types_list[[num]] %>% select(-number), by='drug_type') %>%
+    mutate(likelihood = drug_type_prior * VGAM::dbetabinom.ab(sensitive, cell_count, alpha, beta)) %>%
+    group_by(drug) %>%
+    mutate(posterior=likelihood/sum(likelihood)) %>% 
+    top_n(1, likelihood) %>%
+    ungroup()
+})
+
+cell_assignments_list <- lapply(1:length(targetted_cell_assignments_list), function(num) {
+  bind_rows(targetted_cell_assignments_list[[num]],broad_cell_assignments_list[[num]]) %>%
+    left_join(targeted_drug_priors[[num]], by=c('drug','experiment','drug_type','cell_type')) %>%
+    mutate(targeted_cell_type_prior = case_when(is.na(targeted_cell_type_prior) & drug_type=='broad' ~ cell_type_prior,
+                                                TRUE ~ targeted_cell_type_prior)) %>%
+    select(-cell_type_prior) %>%
+    left_join(broad_drug_priors[[num]],  by=c('drug','experiment','drug_type')) %>%
+    mutate(broad_cell_type_prior = case_when(is.na(broad_cell_type_prior) & drug_type=='targeted' ~ cell_type_prior,
+                                                TRUE ~ broad_cell_type_prior)) %>%
+    select(-cell_type_prior) %>%
+    right_join(drug_assignments_list[[num]] %>% select(drug, drug_type), by=c('drug','drug_type')) %>% 
+    select(drug, cell, value, experiment, measure, drug_type, cell_type, broad_cell_type_prior, targeted_cell_type_prior)
+})
+names(cell_assignments_list) <- names(drug_types_list)
+```
+
+Run EM
+
+```{r}
+iterations_list <- list()
+for(num in 1:length(cell_assignments_list)) {
+  drug_assignments <- drug_assignments_list[[num]]
+  cell_assignments <- cell_assignments_list[[num]]
+  targeted_priors <- targeted_drug_priors[[num]]
+  broad_priors <- broad_drug_priors[[num]]
+  iterations_list[[num]] <- accumulate(1:25, iterate_em, .init = list(drug_assignments = drug_assignments,
+                                                                     cell_assignments = cell_assignments,
+                                                                     targeted_priors = targeted_priors,
+                                                                     broad_priors = broad_priors))
+}
+names(iterations_list) <- names(sensitivity.tibble.list)
+```
+
+Obtain posterior information from last rep
+
+```{r}
+posterior_drug_types_list <- lapply(names(iterations_list), function(num) {
+  iterations_list[[num]] %>% 
+    map_df("drug_types", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_drug_assignments_list <- lapply(names(iterations_list), function(num) {
+  iterations_list[[num]] %>% 
+    map_df("drug_assignments", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_drug_fits_list <- lapply(names(iterations_list), function(num) {
+  iterations_list[[num]] %>% 
+    map_df("drug_fits", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_cell_assignments_list <- lapply(names(iterations_list), function(num) {
+  iterations_list[[num]] %>% 
+    map_df("cell_assignments", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+names(posterior_cell_assignments_list) <- names(iterations_list)
+```
+
+Do one more rep
+
+```{r}
+posteriors_list <- list()
+for(num in 1:length(cell_assignments_list)) {
+  drug_assignments <- posterior_drug_assignments_list[[num]] %>% select(-iteration)
+  cell_assignments <- posterior_cell_assignments_list[[num]]  %>% select(-iteration)
+  targeted_priors <- targeted_drug_priors[[num]]
+  broad_priors <- broad_drug_priors[[num]]
+  posteriors_list[[num]] <- accumulate(1, iterate_em, .init = list(drug_assignments = drug_assignments,
+                                                               cell_assignments = cell_assignments,
+                                                                targeted_priors = targeted_priors,
+                                                                     broad_priors = broad_priors),
+                                       last=TRUE)
+}
+names(posteriors_list) <- names(sensitivity.tibble.list)
+
+posterior_drug_types_full <- lapply(names(posteriors_list), function(num) {
+  posteriors_list[[num]] %>% 
+    map_df("drug_types", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_drug_assignments_full <- lapply(names(posteriors_list), function(num) {
+  posteriors_list[[num]] %>% 
+    map_df("drug_assignments", .id = "iteration") %>%
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_drug_fits_full <- lapply(names(posteriors_list), function(num) {
+  posteriors_list[[num]] %>% 
+    map_df("drug_fits", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+posterior_cell_assignments_full <- lapply(names(posteriors_list), function(num) {
+  posteriors_list[[num]] %>% 
+    map_df("cell_assignments", .id = "iteration") %>% 
+    mutate(iteration = as.numeric(iteration)) %>%
+    filter(iteration==max(iteration))
+})
+names(posterior_cell_assignments_full) <- names(posteriors_list)
+```
+
+Format posterior agreements
+
+```{r}
+posterior_drug_types <- do.call(bind_rows,posterior_drug_types_list) %>%
+  mutate(experiment=rep(names(iterations_list),each=2)) 
+nums <- sapply(posterior_drug_assignments_list, nrow)
+posterior_drug_assignments <- do.call(bind_rows,posterior_drug_assignments_list) %>%
+    mutate(experiment=rep(names(iterations_list),times=nums))
+nums <- sapply(posterior_drug_fits_list, nrow)
+posterior_drug_fits <-  do.call(bind_rows,posterior_drug_fits_list) %>%
+    mutate(experiment=rep(names(iterations_list),times=nums))
+nums <- sapply(posterior_cell_assignments_list, nrow)
+posterior_cell_assignments <- do.call(bind_rows,posterior_cell_assignments_list) %>%
+    mutate(experiment=rep(names(iterations_list),times=nums))
+
+posterior_drug_types <- do.call(bind_rows,posterior_drug_types_full) %>%
+  mutate(experiment=rep(names(posteriors_list),each=2)) 
+nums <- sapply(posterior_drug_assignments_full, nrow)
+posterior_drug_assignments <- do.call(bind_rows,posterior_drug_assignments_full) %>%
+    mutate(experiment=rep(names(posteriors_list),times=nums))
+nums <- sapply(posterior_drug_fits_full, nrow)
+posterior_drug_fits <-  do.call(bind_rows,posterior_drug_fits_full) %>%
+    mutate(experiment=rep(names(posteriors_list),times=nums))
+nums <- sapply(posterior_cell_assignments_full, nrow)
+posterior_cell_assignments <- do.call(bind_rows,posterior_cell_assignments_full) %>%
+    mutate(experiment=rep(names(posteriors_list),times=nums))
+```
+
+Save posteriors
+
+```{r}
+saveRDS(object=posterior_drug_types,file=file.path(opt$log_dir,'posterior_drug_types.RDS'))
+saveRDS(object=posterior_drug_fits,file=file.path(opt$log_dir,'posterior_drug_fits.RDS'))
+saveRDS(object=posterior_drug_assignments,file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
+saveRDS(object=posterior_cell_assignments,file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
+```
+
+Format data frame with posterior information
+
+```{r}
+posterior_cell_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_cell_assignments.RDS'))
+posterior_drug_assignments <- readRDS(file=file.path(opt$log_dir,'posterior_drug_assignments.RDS'))
+posterior_drug_fits <- readRDS(file=file.path(opt$log_dir,'posterior_drug_fits.RDS'))
+posterior <- posterior_cell_assignments %>%
+  select(drug, cell, experiment, drug_type, cell_type, posterior, likelihood, value) %>%
+  rename(cell_type_posterior=posterior,
+         cell_type_likelihood=likelihood,
+         realized_value=value) %>%
+  group_by(drug, cell) %>% 
+  mutate(num_experiments = n_distinct(experiment)) %>%
+  ungroup() %>%
+  left_join(posterior_drug_assignments %>%
+              select(drug, drug_type, posterior,likelihood, experiment) %>%
+              rename(drug_type_posterior=posterior,
+                     drug_type_likelihood=likelihood), by=c('drug_type','drug','experiment')) %>%
+  mutate(cell_type = ifelse(cell_type == 'sensitive' & drug_type == 'broad',
+                            'resistant',cell_type)) %>%
+  left_join(posterior_drug_fits %>%
+              select(drug, cell_type, experiment, alpha, beta, drug_type),
+            by = c('drug','cell_type','experiment','drug_type')) %>%
+  mutate(cell_type_posterior = case_when(drug_type == 'broad' ~ pbeta(realized_value, alpha, beta, lower.tail = FALSE),
+                                         TRUE ~ cell_type_posterior)) %>%
+  select(-alpha, -beta) %>%
+  mutate(cell_type_posterior = ifelse((cell_type == 'resistant' & drug_type == 'targeted') | drug_type=='broad',
+                                      1-cell_type_posterior,cell_type_posterior)) %>%
+  mutate(drug_type_posterior = ifelse(drug_type == 'broad', 1-drug_type_posterior,drug_type_posterior)) %>%
+  rename(posterior_probability_sensitive = cell_type_posterior,
+         posterior_probability_targeted = drug_type_posterior)
+saveRDS(object=posterior,file=file.path(opt$log_dir,'posterior.formatted.RDS'))
+```
+
+Extract intersection data
+
+```{r}
+intersection.fitted.list <- lapply(intersection.tibble.list, function(tibb) {
+  drugs_cells <- tibb %>% 
+    distinct(drug,cell, experiment, measure, value) %>%
+    rename(realized_value = value)
+  experiments <- tibb %>% 
+    distinct(experiment) %>%
+    pull
+  drugs_cells %>% 
+    left_join(posterior %>% 
+                filter(experiment %in% experiments) %>%
+                select(drug, cell, experiment,
+                       drug_type, posterior_probability_targeted, drug_type_likelihood,
+                       cell_type, posterior_probability_sensitive, cell_type_likelihood), 
+              by=c('drug','cell','experiment')) %>%
+        group_by(drug, experiment) %>%
+        fill(drug_type, posterior_probability_targeted, drug_type_likelihood, .direction='down') %>%
+        fill(drug_type, posterior_probability_targeted, drug_type_likelihood, .direction='up') %>%
+        replace_na(list(cell_type='resistant', posterior_probability_sensitive=0,cell_type_likelihood=1)) %>%
+        ungroup()
+})
+saveRDS(object=intersection.fitted.list,file=file.path(opt$log_dir,'intersection.fitted.list.RDS'))
+```

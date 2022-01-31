@@ -1,0 +1,638 @@
+---
+title: "Make figures"
+author: "Matt Ploenzke"
+output: html_document
+---
+
+The purpose of this markdown is to generate the figures in the manuscript
+
+Libraries
+
+```{r}
+library(tidyverse)
+library(viridis)
+library(cowplot)
+library(ggrepel)
+theme_set(theme_bw())
+```
+
+File paths 
+
+```{r}
+results_dir <- '~/Downloads/Pharmacogenomics/results'
+output_dir <- '~/Downloads/Pharmacogenomics/Writeups/figs'
+```
+
+# Two-way posteriors comparison
+
+Load posterior information for just CCLE and GDSC studies
+
+```{r}
+intersection.tibble.list <- readRDS(file.path(results_dir, 'CCLE_GDSC_fit_p60/intersection.fitted.list.RDS'))
+posterior_drug_types <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_types.RDS'))
+posterior_drug_fits <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_fits.RDS'))
+posterior_drug_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_drug_assignments.RDS')) %>% filter(iteration == max(iteration))
+posterior_cell_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/posterior_cell_assignments.RDS')) %>% filter(iteration == max(iteration))
+```
+
+## Crizotinib
+
+CCLE posteriors
+
+```{r}
+experi <- 'CCLE'
+dr <- 'Crizotinib'
+dr_type <- 'targeted'
+drug_posteriors_proportions <- posterior_cell_assignments %>%
+  filter(drug_type == dr_type) %>% 
+  group_by(drug, experiment) %>%
+  summarise(posterior = sum(cell_type=='sensitive')/n()) %>%
+  ungroup()
+betadens <- posterior_drug_fits %>%
+  filter (experiment == experi, drug_type == dr_type) %>%
+    mutate(cross = paste(cell_type, drug, sep='_')) %>%
+    plyr::ddply(., "cross", function(df) {
+      data.frame( 
+      value = seq(.001, .999, length = 1000),
+      beta_curve = dbeta(seq(.001, .999, length = 1000), 
+                           df$alpha, 
+                           df$beta) 
+    )
+  }) %>%
+  as_tibble() %>% 
+  separate(cross,into=c('cell_type','drug'),sep='_') %>%
+  full_join(posterior_drug_fits %>% 
+              filter(experiment == experi, drug_type == dr_type) %>% 
+              mutate(cell_type = ifelse(is.na(cell_type),'NA',cell_type)), 
+            by=c('drug','cell_type')) %>% 
+  left_join(drug_posteriors_proportions, by=c('drug','experiment')) %>%
+  mutate(posterior = ifelse(drug_type=='broad',1,posterior)) %>%
+  mutate(posterior = ifelse(drug_type=='targeted' & cell_type=='resistant',1,posterior)) %>%
+  group_by(drug,cell_type) %>% 
+  mutate(beta_curve = beta_curve/max(beta_curve)*posterior) %>%
+  ungroup() %>%
+  filter(iteration==max(iteration)) %>%
+  mutate(cell_type = ifelse(cell_type=='sensitive','sensitive','resistant'))
+dr_type <- posterior_cell_assignments %>%
+      filter(drug==dr, experiment == experi, drug_type == dr_type) %>% 
+      distinct(drug_type) %>% 
+      pull
+p_top <- posterior_cell_assignments %>%
+  filter(drug==dr, experiment == experi, drug_type == dr_type) %>%
+  ggplot(aes(value,y=..scaled..)) +
+    geom_density(fill=1) +
+    theme_bw() + 
+    theme(legend.position = 'none',
+          plot.title  = element_text(size=16),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+    scale_color_manual(values = c('resistant'='blue', 'sensitive'='orange')) + 
+    labs(y='Scaled Density',x='AOC', title=paste(dr, 'sensitivities and estimated posteriors')) +
+    geom_line(data=betadens %>% filter(drug==dr), aes(y = beta_curve, color=cell_type, lty=cell_type), lwd = .9) + 
+    scale_y_continuous(limits = c(0,1)) + 
+  scale_x_continuous(limits= c(0,.5))
+cell_ty <- p_top$layers[[2]]$data %>% distinct(cell_type) %>% pull()
+p_top$layers[[2]]$data <- p_top$layers[[2]]$data %>% 
+  mutate(beta_curve = ifelse(cell_type == 'sensitive',beta_curve*2, beta_curve),
+         beta_curve = case_when(beta_curve<.0025 & value<.25 ~ NA_real_, 
+                                beta_curve<.0011 & value>.75 ~ NA_real_,
+                                TRUE ~ beta_curve))
+```
+
+GDSC posteriors
+
+```{r}
+experi <- 'GDSC'
+dr <- 'Crizotinib'
+dr_type <- 'targeted'
+drug_posteriors_proportions <- posterior_cell_assignments %>%
+  filter(drug_type == dr_type) %>% 
+  group_by(drug, experiment) %>%
+  summarise(posterior = sum(cell_type=='sensitive')/n()) %>%
+  ungroup()
+betadens <- posterior_drug_fits %>%
+  filter (experiment == experi, drug_type == dr_type) %>%
+    mutate(cross = paste(cell_type, drug, sep='_')) %>%
+    plyr::ddply(., "cross", function(df) {
+      data.frame( 
+      value = seq(.001, .999, length = 1000),
+      beta_curve = dbeta(seq(.001, .999, length = 1000), 
+                           df$alpha, 
+                           df$beta) 
+    )
+  }) %>%
+  as_tibble() %>% 
+  separate(cross,into=c('cell_type','drug'),sep='_') %>%
+  full_join(posterior_drug_fits %>% 
+              filter(experiment == experi, drug_type == dr_type) %>% 
+              mutate(cell_type = ifelse(is.na(cell_type),'NA',cell_type)), 
+            by=c('drug','cell_type')) %>% 
+  left_join(drug_posteriors_proportions, by=c('drug','experiment')) %>%
+  mutate(posterior = ifelse(drug_type=='broad',1,posterior)) %>%
+  mutate(posterior = ifelse(drug_type=='targeted' & cell_type=='resistant',1,posterior)) %>%
+  group_by(drug,cell_type) %>% 
+  mutate(beta_curve = beta_curve/max(beta_curve)*posterior) %>%
+  ungroup() %>%
+  filter(iteration==max(iteration)) %>%
+  mutate(cell_type = ifelse(cell_type=='sensitive','sensitive','resistant'))
+dr_type <- posterior_cell_assignments %>%
+      filter(drug==dr, experiment == experi, drug_type == dr_type) %>% 
+      distinct(drug_type) %>% 
+      pull
+p_side <- posterior_cell_assignments %>%
+  filter(drug==dr, experiment == experi, drug_type == dr_type) %>%
+  ggplot(aes(value,y=..scaled..)) +
+    geom_density(fill=1) +
+    theme_bw() + 
+    theme(legend.position = 'none',
+          plot.title  = element_text(size=16),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+    scale_color_manual(values = c('resistant'='blue', 'sensitive'='orange')) + 
+    labs(y='Scaled Density',x='AOC', title='') +
+    geom_line(data=betadens %>% filter(drug==dr), aes(y = beta_curve, color=cell_type, lty=cell_type), lwd = .9) + 
+    scale_y_continuous(limits = c(0,1)) + 
+  scale_x_continuous(limits= c(0,.5))
+cell_ty <- p_side$layers[[2]]$data %>% distinct(cell_type) %>% pull()
+p_side$layers[[2]]$data <- p_side$layers[[2]]$data %>% 
+  mutate(beta_curve = ifelse(cell_type == 'sensitive',beta_curve*2, beta_curve),
+         beta_curve = case_when(beta_curve<.0025 & value<.25 ~ NA_real_, 
+                                beta_curve<.0011 & value>.75 ~ NA_real_,
+                                TRUE ~ beta_curve))
+tempdat <- p_side$data 
+p_side <- p_side + ggpubr::rotate()
+```
+
+Cells in common
+
+```{r}
+p_main <- intersection.tibble.list[['CCLE_GDSC']] %>%
+  filter(drug==dr, drug_type == dr_type) %>% 
+  select(drug,cell,experiment, measure, everything()) %>%
+  gather(variable, value, -(drug:measure)) %>% 
+  unite(temp, experiment, variable) %>%
+  spread(temp,value) %>%
+  ggplot(aes(x=as.numeric(CCLE_realized_value),y=as.numeric(GDSC_realized_value))) + 
+  geom_point(alpha=.5,size=4) + 
+  scale_color_brewer(palette = 'Dark2') + 
+  theme_bw() + 
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        panel.grid = element_blank()) +
+  labs(x='CCLE',y='GDSC') +
+  scale_x_continuous(limits=c(0,.5),breaks = c(0,.25,.5)) + 
+  scale_y_continuous(limits=c(0,.5),breaks = c(0,.25,.5)) 
+fig1a <- ggdraw() +
+  draw_plot(p_main,0,0,.85,.85) +
+  draw_plot(p_top,.05,.85,.80,.15) +
+  draw_plot(p_side,.85,.05,.15,.80) 
+```
+
+## 17-AAG
+
+CCLE posteriors
+
+```{r}
+experi <- 'CCLE'
+dr <- '17-AAG'
+dr_type <- 'broad'
+drug_posteriors_proportions <- posterior_cell_assignments %>%
+  filter(drug_type == dr_type) %>% 
+  group_by(drug, experiment) %>%
+  summarise(posterior = sum(cell_type=='sensitive')/n()) %>%
+  ungroup()
+betadens <- posterior_drug_fits %>%
+  filter (experiment == experi, drug_type == dr_type) %>%
+    mutate(cross = paste(cell_type, drug, sep='_')) %>%
+    plyr::ddply(., "cross", function(df) {
+      data.frame( 
+      value = seq(.001, .999, length = 1000),
+      beta_curve = dbeta(seq(.001, .999, length = 1000), 
+                           df$alpha, 
+                           df$beta) 
+    )
+  }) %>%
+  as_tibble() %>% 
+  separate(cross,into=c('cell_type','drug'),sep='_') %>%
+  full_join(posterior_drug_fits %>% 
+              filter(experiment == experi, drug_type == dr_type) %>% 
+              mutate(cell_type = ifelse(is.na(cell_type),'NA',cell_type)), 
+            by=c('drug','cell_type')) %>% 
+  left_join(drug_posteriors_proportions, by=c('drug','experiment')) %>%
+  mutate(posterior = ifelse(drug_type=='broad',1,posterior)) %>%
+  mutate(posterior = ifelse(drug_type=='targeted' & cell_type=='resistant',1,posterior)) %>%
+  group_by(drug,cell_type) %>% 
+  mutate(beta_curve = beta_curve/max(beta_curve)*posterior) %>%
+  ungroup() %>%
+  filter(iteration==max(iteration)) %>%
+  mutate(cell_type = ifelse(cell_type=='sensitive','sensitive','resistant'))
+dr_type <- posterior_cell_assignments %>%
+      filter(drug==dr, experiment == experi, drug_type == dr_type) %>% 
+      distinct(drug_type) %>% 
+      pull
+p_top <- posterior_cell_assignments %>%
+  filter(drug==dr, experiment == experi, drug_type == dr_type) %>%
+  ggplot(aes(value,y=..scaled..)) +
+    geom_density(fill=1) +
+    theme_bw() + 
+    theme(legend.position = 'none',
+          plot.title  = element_text(size=16),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+    scale_color_manual(values = c('resistant'='blue', 'sensitive'='orange')) + 
+    labs(y='Scaled Density',x='AOC', title = paste(dr, 'sensitivities and estimated posteriors')) +
+    geom_line(data=betadens %>% filter(drug==dr), aes(y = beta_curve, color=cell_type), lwd = .9) + 
+    scale_y_continuous(limits = c(0,1)) 
+```
+
+GDSC posteriors
+
+```{r}
+experi <- 'GDSC'
+dr <- '17-AAG'
+dr_type <- 'broad'
+drug_posteriors_proportions <- posterior_cell_assignments %>%
+  filter(drug_type == dr_type) %>% 
+  group_by(drug, experiment) %>%
+  summarise(posterior = sum(cell_type=='sensitive')/n()) %>%
+  ungroup()
+betadens <- posterior_drug_fits %>%
+  filter (experiment == experi, drug_type == dr_type) %>%
+    mutate(cross = paste(cell_type, drug, sep='_')) %>%
+    plyr::ddply(., "cross", function(df) {
+      data.frame( 
+      value = seq(.001, .999, length = 1000),
+      beta_curve = dbeta(seq(.001, .999, length = 1000), 
+                           df$alpha, 
+                           df$beta) 
+    )
+  }) %>%
+  as_tibble() %>% 
+  separate(cross,into=c('cell_type','drug'),sep='_') %>%
+  full_join(posterior_drug_fits %>% 
+              filter(experiment == experi, drug_type == dr_type) %>% 
+              mutate(cell_type = ifelse(is.na(cell_type),'NA',cell_type)), 
+            by=c('drug','cell_type')) %>% 
+  left_join(drug_posteriors_proportions, by=c('drug','experiment')) %>%
+  mutate(posterior = ifelse(drug_type=='broad',1,posterior)) %>%
+  mutate(posterior = ifelse(drug_type=='targeted' & cell_type=='resistant',1,posterior)) %>%
+  group_by(drug,cell_type) %>% 
+  mutate(beta_curve = beta_curve/max(beta_curve)*posterior) %>%
+  ungroup() %>%
+  filter(iteration==max(iteration)) %>%
+  mutate(cell_type = ifelse(cell_type=='sensitive','sensitive','resistant'))
+dr_type <- posterior_cell_assignments %>%
+      filter(drug==dr, experiment == experi, drug_type == dr_type) %>% 
+      distinct(drug_type) %>% 
+      pull
+p_side <- posterior_cell_assignments %>%
+  filter(drug==dr, experiment == experi, drug_type == dr_type) %>%
+  ggplot(aes(value,y=..scaled..)) +
+    geom_density(fill=1) +
+    theme_bw() + 
+    theme(legend.position = 'none',
+          plot.title  = element_text(size=16),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.border = element_blank(), panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+    scale_color_manual(values = c('resistant'='blue', 'sensitive'='orange')) + 
+    labs(y='Scaled Density',x='AOC',  title='') +
+    geom_line(data=betadens %>% filter(drug==dr), aes(y = beta_curve, color=cell_type), lwd = .9) + 
+    scale_y_continuous(limits = c(0,1)) +
+  ggpubr::rotate()
+```
+
+Cells in common
+
+```{r}
+p_main <- intersection.tibble.list[['CCLE_GDSC']] %>%
+  filter(drug==dr, drug_type == dr_type) %>% 
+  select(drug,cell,experiment, measure, everything()) %>%
+  gather(variable, value, -(drug:measure)) %>% 
+  unite(temp, experiment, variable) %>%
+  spread(temp,value) %>%
+  ggplot(aes(x=as.numeric(CCLE_realized_value),y=as.numeric(GDSC_realized_value))) + 
+  geom_point(alpha=.5,size=4) + 
+  scale_color_brewer(palette = 'Dark2') + 
+  theme_bw() + 
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        panel.grid = element_blank()) +
+  labs(x='CCLE',y='GDSC') +
+  scale_x_continuous(limits=c(0,1),breaks = c(0,.5,1)) + 
+  scale_y_continuous(limits=c(0,1),breaks = c(0,.5,1)) 
+fig1b <- ggdraw() +
+  draw_plot(p_main,0,0,.85,.85) +
+  draw_plot(p_top,.05,.85,.80,.15) +
+  draw_plot(p_side,.85,.05,.15,.80) 
+```
+
+## Combine
+```{r}
+fig1 <- plot_grid(fig1a, fig1b, labels = c('a)', 'b)'), label_size = 16)
+ggsave(file.path(output_dir, 'posteriors.pdf'), width=12,height=6, units='in')
+```
+
+# Drug type and accuracy comparison
+
+Load intersection posterior (just CCLE and GDSC)
+
+```{r}
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_p60/intersection.fitted.list.RDS'))
+```
+
+Dug type
+
+```{r}
+fig2a <- intersection.fitted.list[[1]] %>% 
+  distinct(drug, experiment, drug_type, posterior_probability_targeted) %>%
+  filter(drug_type == 'targeted') %>% 
+  pivot_wider(names_from=experiment,values_from=posterior_probability_targeted) %>%
+  ggplot(aes(x=CCLE, y=GDSC)) + 
+  geom_vline(xintercept=.5, lty=2) +
+  geom_hline(yintercept=.5, lty=2) + 
+  geom_text_repel(aes(label=drug),force=10) +
+  geom_point(shape=21,size=2.5,alpha=.75,fill='grey') +
+  scale_x_continuous(breaks=c(0,.5,1)) +
+  scale_y_continuous(breaks=c(0,.5,1)) +
+  theme(panel.grid = element_blank(),
+        axis.text  = element_text(size=14),
+        axis.title  = element_text(size=14),
+        plot.title  = element_text(size=16)) + 
+  labs(title = 'Estimated drug targetedness') 
+```
+
+Accuracy
+
+```{r}
+fig2b <- intersection.fitted.list[[1]] %>% 
+  filter(drug_type=='targeted', !(drug %in% c('17-AAG','paclitaxel','PD-0325901'))) %>% 
+  select(drug,  cell, experiment, realized_value) %>% 
+  pivot_wider(names_from = experiment, values_from = realized_value) %>%
+  group_by(drug) %>% 
+  summarise(spearman = cor(CCLE, GDSC, method='spearman')) %>%
+  ungroup() %>%
+  left_join(intersection.fitted.list[[1]] %>% 
+    filter(drug_type=='targeted', !(drug %in% c('17-AAG','paclitaxel','PD-0325901'))) %>% 
+    select(drug,  cell, experiment, cell_type) %>%
+      pivot_wider(names_from = experiment, values_from = cell_type) %>%
+    group_by(drug) %>% 
+    summarise(accuracy = mean((CCLE=='sensitive' & GDSC=='sensitive') | (CCLE=='resistant' & GDSC=='resistant'))) %>%
+    ungroup(), by='drug') %>%
+  ggplot(aes(x=spearman, y=accuracy)) + 
+  geom_text_repel(aes(label=drug)) +
+  geom_point(shape=21,size=2.5,alpha=.75, fill='grey') +
+  theme(#panel.grid = element_blank(),
+        axis.text  = element_text(size=14),
+        axis.title  = element_text(size=14),
+        plot.title  = element_text(size=16)) + 
+  scale_y_continuous(limits = c(-.1,1),labels = c(0,.5,1), breaks=c(0,.5,1)) +  
+  scale_x_continuous(limits = c(-.1,1), labels = c(0,.5,1), breaks=c(0,.5,1)) +
+  labs(title = 'Estimated cell agreement',
+       x = "Spearman rank correlation",
+       y = "Accuracy")
+```
+
+Combine 
+
+```{r}
+fig2 <- plot_grid(fig2a, fig2b, labels = c('a)', 'b)'), label_size = 16)
+ggsave(file.path(output_dir, 'prop_agree.pdf'), width=12,height=6, units='in')
+```
+
+# Biomarker comparison
+
+Load biomarkers
+
+```{r}
+all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC_biomarkers_rna/all_effect_sizes.csv')) %>%
+  mutate(Feature = 'RNA') %>%
+  bind_rows(read_csv(file.path(results_dir,'CCLE_GDSC_biomarkers_cnv/all_effect_sizes.csv')) %>%
+  mutate(Feature = 'CNV')) %>%
+  bind_rows(read_csv(file.path(results_dir, 'CCLE_GDSC_biomarkers_mutation/all_effect_sizes.csv')) %>%
+  mutate(Feature = 'Mutation'))
+```
+
+CAT plot
+
+```{r}
+tdat <- all_effect_sizes %>% 
+  filter((Method=='Binarized' & !(Drug %in% c('17-AAG','paclitaxel','PD-0325901')))) %>% 
+  filter(Dataset!='Joint') %>%
+  filter(symbol != 'waterfall', Measure!='waterfall') %>%
+  select(symbol, Feature, entrezgene_id, adj.P.Val, Measure, Dataset, Drug) %>%
+  distinct() %>%
+  group_by(Drug, Dataset, Measure) %>% 
+  arrange(adj.P.Val) %>%
+  mutate(Rank = row_number()) %>%
+  ungroup() %>%
+  select(-adj.P.Val, -entrezgene_id) %>%
+  pivot_wider(names_from=Dataset,values_from=Rank) %>%
+  group_by(Drug, Measure) %>%
+  mutate(GDSC_count = max(GDSC,na.rm=TRUE),
+         CCLE_count = max(CCLE,na.rm=TRUE)) %>%
+  ungroup() %>%
+  mutate_if(is.integer, as.double) %>%
+  mutate(GDSC = case_when(is.na(GDSC) ~ GDSC_count+1,
+                          TRUE ~ GDSC),
+         CCLE = case_when(is.na(CCLE) ~ CCLE_count+1,
+                          TRUE ~ CCLE)) 
+pdat <- tibble()
+for (dr in unique(tdat$Drug)) {
+  for (meas in unique(tdat$Measure)) {
+    ttdat <- tdat %>% 
+      filter(Drug==dr, Measure == meas)
+    max_list <- min(unique(ttdat$GDSC_count),unique(ttdat$CCLE_count))
+    for (ii in seq(1,max_list/10,length.out = 1000)) {
+    #for (ii in seq(1,500, by=1)) {
+      pdat <- ttdat %>% 
+        filter(GDSC <= ii | CCLE <= ii) %>%
+        summarise(percent_in_common = sum(GDSC <= ii & CCLE <= ii)/ii*100) %>%
+        mutate(List_Size = ii,
+               Drug = dr, 
+               Measure = meas,
+               List_Length = max_list) %>%
+        bind_rows(pdat)
+    }
+  }
+}
+fig3a <- pdat %>% 
+  mutate(Measure = case_when(Measure=='AAC' ~ 'AAC-based',
+                             TRUE ~ 'Model-based')) %>%
+  ggplot(aes(x=List_Size/max_list,y=percent_in_common,color=Measure)) + 
+  geom_line() + 
+  theme_bw() + 
+  facet_wrap(vars(Drug),ncol=4, scales='free') + 
+  theme(panel.grid = element_blank(), 
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.title = element_text(size=14),
+        legend.text = element_text(size=14),
+        plot.title = element_text(size=16),
+        legend.position='bottom') +
+  scale_color_grey() + 
+  labs(x= 'Relative List Size (%)',y='Genes In Common (%)', color='',
+       title='Relative list size agreement') + 
+  scale_y_continuous(limits = c(0,100),labels = c(0,100), breaks=c(0,100)) + 
+  scale_x_continuous(limits = c(0,.075),labels = c('0','5'), breaks=c(0,.05))
+```
+
+Test statistic arrows plot
+
+```{r}
+all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC1000_CTRPv2_FIMM_gCSI_biomarkers_rna/all_effect_sizes.csv')) %>% 
+  filter(Drug=='Crizotinib')  %>%
+  filter((Dataset=='Joint' & Measure=='Posterior' & Method=='Binarized') | 
+           (Dataset=='Joint' & Measure=='AAC' & Method == 'Binarized')) %>%
+  distinct()
+
+fig3b  <- all_effect_sizes %>% 
+  filter(isKnown) %>%
+  select(symbol, Feature, t, Measure) %>%
+  spread(Measure, t) %>% 
+  replace_na(list(AAC=0, Posterior=0)) %>%
+  arrange(Posterior) %>%
+  mutate(yy=row_number(),
+         color = (Posterior>AAC & Posterior>=0) | (Posterior<AAC & Posterior<=0)) %>%
+  ggplot(aes(x=AAC, xend=Posterior,
+             y=reorder(symbol,yy),yend=reorder(symbol,yy),
+             color = color)) + 
+  geom_vline(aes(xintercept=0),lty=1) + 
+  geom_vline(aes(xintercept=-3),lty=2,alpha=.2) + 
+  geom_vline(aes(xintercept=3),lty=2,alpha=.2) + 
+  geom_segment(arrow=arrow(angle=20, length=unit(.25,'cm'))) + 
+  theme_bw() + 
+  labs(x='Test statistic', y='',
+       title = 'Change in test statistic') + 
+  lims(x=c(-3.5,7.5)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=16),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position = 'none') + 
+  scale_color_viridis_d(option = "viridis", end=.5) 
+```
+
+Combine
+
+```{r}
+fig3 <- plot_grid(fig3a, fig3b, labels = c('a)', 'b)'), label_size = 16, rel_widths = c(2,1))
+ggsave(file.path(output_dir, 'biomarkers.pdf'), width=12,height=6, units='in')
+```
+
+# PRISM proportion of zeros comparison
+
+```{r}
+intersection.fitted.list <- readRDS(file.path(results_dir,'PRISM_GDSC_CTRP_zeros_included/intersection.fitted.list.RDS'))
+p_zero <- tibble()
+for (comp in names(intersection.fitted.list)) {
+  p_zero <- intersection.fitted.list[[comp]] %>%
+    group_by(drug, experiment, drug_type) %>%
+    summarise(prop_zero = mean(realized_value<=1e-2)) %>%
+    ungroup() %>%
+    mutate(comparison = comp) %>%
+    bind_rows(p_zero)
+}
+p_zero %>%  
+  select(drug, experiment, prop_zero) %>%
+  ggplot(aes(x=experiment,y=prop_zero)) + 
+  geom_boxplot(width=.5) +
+  theme_bw() +
+  theme(plot.title = element_text(size=16),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14),
+        legend.position = 'none') +
+  labs(y='', title='Proportion of cells exhibiting no response per drug')
+ggsave(file.path(output_dir, 'prop_zeros.pdf'),width=6,height=6,units='in')
+```
+
+# Pathways comparison
+
+```{r}
+pathway_path <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI_pathway_rna_2')
+drugs <- list.dirs(pathway_path,full.names=FALSE)
+drugs <- drugs[drugs!='']
+KEGG_tibble <- tibble()
+for (dr in drugs) {
+  filles <- list.files(file.path(pathway_path,dr))
+  for (fi in filles) {
+    if (grepl('KEGG',fi)) { 
+      KEGG_tibble <- read_csv(file.path(pathway_path,dr,fi)) %>%
+        as_tibble() %>%
+        mutate(File=fi, Drug=dr) %>%
+        bind_rows(KEGG_tibble)
+    }
+  }
+}
+KEGG_tibble <- KEGG_tibble %>%
+  mutate(File = gsub('KEGG_','',File)) %>%
+  mutate(File = gsub('.csv','',File)) %>%
+  separate(File,  into=c('Measure','Measure2','Dataset'),sep='_',fill='right',remove=TRUE) %>% 
+  select(-Measure2) %>% 
+  mutate(Dataset =  case_when((Dataset=='sensitive' | is.na(Dataset)) ~ 'Joint',
+                              TRUE ~ Dataset)) %>%
+  mutate(Measure = case_when(Measure == 'naive' ~ 'AAC',
+                             Measure == 'posterior'  ~ 'Posterior',
+                             Measure == 'cell'  ~ 'Cell type',
+                             Measure == 'auc' ~ 'Numeric-AAC'))
+plot_dat <- KEGG_tibble %>% 
+  filter(Measure %in% c("AAC", "Cell type"), Dataset=='Joint') %>%
+  unite(Measure, Measure, Dataset, sep=' ') %>%
+  mutate(P=pmin(P.Up, P.Down)) %>%
+  mutate(Up = case_when(P.Up < P.Down ~ 'Up',
+                        TRUE ~ 'Down')) %>%
+  select(Pathway, Measure, P, Drug) %>% 
+  arrange(P) %>%
+  distinct(Pathway, Measure, Drug, .keep_all = TRUE) %>%
+  mutate(P = -log10(P)) %>%
+  spread(Measure, P) %>% 
+  replace_na(list(`AAC Joint`=0, `Cell type Joint`=0)) %>%
+  rename(Comparison = `AAC Joint`) %>%
+  rename(myMethod = `Cell type Joint`) 
+pp <- plot_dat %>%
+    mutate(color = case_when(str_detect(Pathway,'kinase') |  
+                               str_detect(Pathway,'JAK') | 
+                               str_detect(Pathway,'ALK') | 
+                               str_detect(Pathway, "Pathways in cancer") |
+                               str_detect(Pathway, "Antineoplastic") |
+                               str_detect(Pathway, "Non-small cell lung cancer") ~ 5,
+                           Comparison>= -log10(.05) & myMethod < -log10(.05) ~ 1,
+                           Comparison< -log10(.05) & myMethod>= -log10(.05) ~ 2,
+                           Comparison >= -log10(.05) | myMethod>= -log10(.05) ~ 3,
+                           TRUE ~ 4)) %>% 
+  mutate(Pathway = case_when(color == 5 ~ Pathway,
+                             Comparison>= -log10(1e-3) ~Pathway,
+                             myMethod >= -log10(1e-5) ~ Pathway,
+                             TRUE ~ '')) %>%
+  ggplot(aes(x=Comparison, y=myMethod, color=as.factor(color))) + 
+  geom_vline(aes(xintercept=0)) + 
+  geom_hline(aes(yintercept=0)) + 
+  geom_abline(aes(slope=1,intercept=0)) + 
+  geom_point(aes(shape=as.factor(color))) + 
+  geom_text_repel(data = . %>% filter(color != 5), aes(label=Pathway), size=3.5, max.overlaps = 100) + 
+  geom_text_repel(data = . %>% filter(color == 5), aes(label=Pathway), size=3.5, max.overlaps = 100,
+                  arrow=arrow(length=unit(.01,"npc")), box.padding = .8, point.padding = .5) + 
+  theme_bw()+ 
+  theme(legend.position='none', 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=16),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=14)) +
+  scale_colour_manual(values = c("5" = "red", "4" = "grey40", "3" = "grey40", "1" = "grey40","2" = "grey40")) + 
+  labs(x='AAC-based -log10(P-value)', y='Model-based -log10(P-value)',
+       title='Estimated significance of pathway regulation')
+ggsave(plot=pp, file.path(output_dir, 'pathways.pdf'),width=9,height=9,units='in')
+```
