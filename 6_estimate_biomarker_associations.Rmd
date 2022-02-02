@@ -20,13 +20,13 @@ pset_dir <- file.path('~/Downloads', 'PSets')
 posteriors_dir <- file.path('~/Downloads','results')
 use_all_features <- TRUE # use all available features (TRUE) or restrict to features with a previously-documented association (FALSE)
 downsample_features <- TRUE # downsample to 5K most variable features (TRUE, recommended)
-feature.types <- c("rna") # mutation fusion cnv rna rna2 rnaseq
+feature.type <- "rna" # mutation fusion cnv rna rna2 rnaseq
 impute_with_mean <- TRUE # if a feature exists for some cells but not others, replace the missings with the mean
 mean_common_cells <- TRUE # reduce joint dataset to mean sensitivity measure 
 include_individual_posteriors <- TRUE # for individual study comparisons, should the posterior fit via only that dataset be included (TRUE) or should it be compared to the joint fit posterior (FALSE)
 individual_study_measures <- c('waterfall','naive','auc_recomputed','posterior_probability_sensitive','cell_type')
 joint_study_measures <- c('naive','auc_recomputed','posterior_probability_sensitive','cell_type')
-output_dir <- paste(comparison,'biomarkers',feature.types[1],sep='_')
+output_dir <- file.path(comparison,'biomarkers')
 dir.create(output_dir,showWarnings = FALSE, recursive=TRUE)
 ```
 
@@ -34,13 +34,9 @@ Load posteriors
 
 ```{r}
 if (include_individual_posteriors) {
-  individual_posteriors <- readRDS(file.path(posteriors_dir,
-                                             paste(comparison,'_fit_within_study',sep=''),
-                                             'posterior.formatted.RDS'))
+  individual_posteriors <- readRDS(file.path(posteriors_dir,comparison,'fit_within_study', 'posterior.formatted.RDS'))
 }
-joint_posteriors <- readRDS(file.path(posteriors_dir,
-                                      paste(comparison,'_fit_across_study',sep=''),
-                                      'posterior.formatted.RDS')) 
+joint_posteriors <- readRDS(file.path(posteriors_dir,comparison,'fit_across_study', 'posterior.formatted.RDS')) 
 gene_drug_asociations <- read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "mutation") %>%
   as_tibble() %>%
   bind_rows(read_excel(file.path(pset_dir,'gene_drug_asociations.xlsx'), sheet = "copy_number_variation"),
@@ -126,7 +122,7 @@ for (dataset in datasets) {
     mutate(experiment = dataset)
   ii <- 1
   any.features.exist <- FALSE
-  for (feat in feature.types) {
+  for (feat in feature.type) {
     if (!(feat %in% mDataNames(tempPset))) {
       next()  
     }
@@ -203,7 +199,7 @@ for (dataset in datasets) {
     }
     if (downsample_features) {
       var.sds <- c()
-      for (feat in feature.types) { 
+      for (feat in feature.type) { 
         var.sds <- c(var.sds, apply(joined %>% select(contains(feat)), 2, sd, na.rm=TRUE))
       }
       var.sds <- sort(var.sds,decreasing = TRUE)
@@ -470,6 +466,6 @@ all_effect_sizes <- all_effect_sizes %>%
   replace_na(list(isKnown = FALSE,
                   logFC=0,
                   P.val=1))
-write_csv(all_effect_sizes, path=file.path(output_dir, 'all_effect_sizes.csv'), 
+write_csv(all_effect_sizes, path=file.path(output_dir, paste0(feature.type,'.csv')), 
               col_names = TRUE, append = FALSE)
 ```

@@ -17,9 +17,9 @@ Set options
 datasets = c('PRISM','GDSC','CTRP') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
 exclude_zeros = FALSE
 prism_dir = file.path('~/Downloads', 'prism')
-output_dir = file.path('~/Downloads', 'results', paste(paste(datasets,collapse='_'),
-                                                       paste0('zeros_', iflese(exclude_zeros,'excluded','included')),
-                                                       sep='_'))
+output_dir = file.path('~/Downloads', 'results', 
+                       paste(datasets,collapse='_'),
+                       paste0('zeros_', iflese(exclude_zeros,'excluded','included')))
 dir.create(output_dir, showWarnings = FALSE, recursive=TRUE)
 ```
 

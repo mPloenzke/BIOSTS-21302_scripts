@@ -17,7 +17,7 @@ devtools::install_github('https://github.com/bhklab/PharmacoGx/tree/28f9c62f2b59
 #install.packages('readxl')
 #install.packages('viridis')
 #install.packages('ggrepel')
-# also need biomaRt, Biobase, and limma from bioconductor
+# also need biomaRt, Biobase, and limma from bioconductor for the pathway analysis
 ```
 
 Download PSets for CCLE and GDSC comparison

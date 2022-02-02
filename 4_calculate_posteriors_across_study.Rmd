@@ -16,7 +16,7 @@ Set options
 ```{r}
 datasets = c("CCLE", "GDSC1000", 'CTRPv2', 'FIMM') # CCLE GDSC GDSC1000 gCSI FIMM CTRPv2
 pset_dir = file.path('~/Downloads', 'PSets')
-output_dir = file.path('~/Downloads', 'results', paste(paste(datasets,collapse='_'),'fit_across_study',sep='_'))
+output_dir = file.path('~/Downloads', 'results', paste(datasets,collapse='_'),'fit_across_study')
 dir.create(output_dir, showWarnings = FALSE, recursive=TRUE)
 ```
 

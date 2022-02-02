@@ -28,11 +28,11 @@ output_dir <- '~/Downloads/figs'
 Load posterior information for just CCLE and GDSC studies
 
 ```{r}
-intersection.tibble.list <- readRDS(file.path(results_dir, 'CCLE_GDSC_fit_within_study/intersection.fitted.list.RDS'))
-posterior_drug_types <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_types.RDS'))
-posterior_drug_fits <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_fits.RDS'))
-posterior_drug_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_drug_assignments.RDS')) %>% filter(iteration == max(iteration))
-posterior_cell_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/posterior_cell_assignments.RDS')) %>% filter(iteration == max(iteration))
+intersection.tibble.list <- readRDS(file.path(results_dir, 'CCLE_GDSC','fit_within_study','intersection.fitted.list.RDS'))
+posterior_drug_types <- readRDS(file.path(results_dir,'CCLE_GDSC','fit_within_study','posterior_drug_types.RDS'))
+posterior_drug_fits <- readRDS(file.path(results_dir,'CCLE_GDSC','fit_within_study','posterior_drug_fits.RDS'))
+posterior_drug_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC','fit_within_study','posterior_drug_assignments.RDS')) %>% filter(iteration == max(iteration))
+posterior_cell_assignments <- readRDS(file.path(results_dir,'CCLE_GDSC','fit_within_study','posterior_cell_assignments.RDS')) %>% filter(iteration == max(iteration))
 ```
 
 ## Crizotinib
@@ -349,7 +349,7 @@ ggsave(file.path(output_dir, 'posteriors.pdf'), width=12,height=6, units='in')
 Load intersection posterior (just CCLE and GDSC)
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC_fit_within_study/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'CCLE_GDSC','fit_within_study','intersection.fitted.list.RDS'))
 ```
 
 Dug type
@@ -416,11 +416,11 @@ ggsave(file.path(output_dir, 'prop_agree.pdf'), width=12,height=6, units='in')
 Load biomarkers
 
 ```{r}
-all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC_biomarkers_rna/all_effect_sizes.csv')) %>%
+all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC','biomarkers','rna.csv')) %>%
   mutate(Feature = 'RNA') %>%
-  bind_rows(read_csv(file.path(results_dir,'CCLE_GDSC_biomarkers_cnv/all_effect_sizes.csv')) %>%
+  bind_rows(read_csv(file.path(results_dir,'CCLE_GDSC','biomarkers','cnv.csv')) %>%
   mutate(Feature = 'CNV')) %>%
-  bind_rows(read_csv(file.path(results_dir, 'CCLE_GDSC_biomarkers_mutation/all_effect_sizes.csv')) %>%
+  bind_rows(read_csv(file.path(results_dir, 'CCLE_GDSC','biomarkers','mutation.csv')) %>%
   mutate(Feature = 'Mutation'))
 ```
 
@@ -491,7 +491,7 @@ fig3a <- pdat %>%
 Test statistic arrows plot
 
 ```{r}
-all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC1000_CTRPv2_FIMM_gCSI_biomarkers_rna/all_effect_sizes.csv')) %>% 
+all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC1000_CTRPv2_FIMM_gCSI','biomarkers','rna.csv')) %>% 
   filter(Drug=='Crizotinib')  %>%
   filter((Dataset=='Joint' & Measure=='Posterior' & Method=='Binarized') | 
            (Dataset=='Joint' & Measure=='AAC' & Method == 'Binarized')) %>%
@@ -535,7 +535,7 @@ ggsave(file.path(output_dir, 'biomarkers.pdf'), width=12,height=6, units='in')
 # PRISM proportion of zeros comparison
 
 ```{r}
-intersection.fitted.list <- readRDS(file.path(results_dir,'PRISM_GDSC_CTRP_zeros_included/intersection.fitted.list.RDS'))
+intersection.fitted.list <- readRDS(file.path(results_dir,'PRISM_GDSC_CTRP','zeros_included','intersection.fitted.list.RDS'))
 p_zero <- tibble()
 for (comp in names(intersection.fitted.list)) {
   p_zero <- intersection.fitted.list[[comp]] %>%
@@ -561,7 +561,7 @@ ggsave(file.path(output_dir, 'prop_zeros.pdf'),width=6,height=6,units='in')
 # Pathways comparison
 
 ```{r}
-pathway_path <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI_pathway_rna_2')
+pathway_path <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI','rna2_pathway_Crizotinib')
 drugs <- list.dirs(pathway_path,full.names=FALSE)
 drugs <- drugs[drugs!='']
 KEGG_tibble <- tibble()
