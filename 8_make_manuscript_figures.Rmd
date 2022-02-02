@@ -339,6 +339,7 @@ fig1b <- ggdraw() +
 ```
 
 ## Combine
+
 ```{r}
 fig1 <- plot_grid(fig1a, fig1b, labels = c('a)', 'b)'), label_size = 16)
 ggsave(file.path(output_dir, 'posteriors.pdf'), width=12,height=6, units='in')

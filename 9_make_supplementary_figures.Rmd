@@ -6,7 +6,8 @@ output: html_document
 
 # Set up 
 
-Libraries.
+Libraries
+
 ```{r}
 library(tidyverse)
 library(viridis)
@@ -15,7 +16,8 @@ library(ggrepel)
 theme_set(theme_bw())
 ```
 
-Options.
+Options
+
 ```{r}
 results_dir <- '~/Downloads/results'
 output_dir <- '~/Downloads/supplemental_figs/'
