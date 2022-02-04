@@ -67,14 +67,28 @@ write_csv(x=broadeffect_drugs,
 ```
 
 Supplemental table 5
-   - Fusion 
+   - ALK fusion posteriors
+   - Fusions downloaded from NCBI DOI: 10.1038/s41467-019-09940-1 Supplementary Materials
 
 ```{r}
-
+annotations <- readxl::read_excel(file.path(results_dir, "41467_2019_9940_MOESM5_ESM.xlsx")) %>% 
+   filter(str_detect(`Fusion Name`,'ALK')) %>% 
+   distinct(`Cell Line`, `Fusion Name`) 
+input_file <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI', 'fit_across_study', 'posterior.formatted.RDS')
+crizo_sensitivities <- readRDS(input_file) %>% 
+   as_tibble() %>%
+   filter(drug == 'Crizotinib', drug_type == 'targeted') %>% 
+   na.omit() %>% 
+   left_join(annotations %>% filter(`Fusion Name` %in% c('EML4--ALK', 'NPM1--ALK')), by=c('cell'='Cell Line')) %>% 
+   filter(!is.na(`Fusion Name`)) %>% 
+   select(drug, cell, `Fusion Name`, experiment, drug_type, cell_type, posterior_probability_sensitive, aac=realized_value)
+write_csv(x=crizo_sensitivities, 
+          file=file.path(output_dir, 'SupplementalTable5.csv'),
+          na='')
 ```
 
 Supplemental table 6
-   - CCLE/GDSC biomarkers effect sizes
+   - CCLE/GDSC biomarker effect sizes
 
 ```{r}
 all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC1000_CTRPv2_FIMM_gCSI','biomarkers','rna.csv')) %>% 
