@@ -437,23 +437,5 @@ intersection.fitted.list <- lapply(intersection.tibble.list, function(tibb) {
         fill(drug_type, posterior_probability_targeted, drug_type_likelihood, .direction='up') %>%
         ungroup()
 })
-```
-
-Save intersection data
-
-```{r}
-for (nn in names(intersection.fitted.list)) {
-  intersection.fitted.list[[nn]] %>% 
-    filter((drug_type == 'targeted' & posterior_probability_targeted >= .5) | 
-           (drug_type == 'broad' & posterior_probability_targeted < .5)) %>% 
-    filter((cell_type == 'sensitive' & posterior_probability_sensitive >= .5 & drug_type == 'targeted') | 
-           (cell_type == 'resistant' & posterior_probability_sensitive < .5 & drug_type == 'targeted') | 
-           drug_type == 'broad') %>% 
-    select(drug, cell, experiment, realized_value, drug_type, 
-           posterior_probability_targeted, cell_type,
-           posterior_probability_sensitive) %>%
-    as.data.frame() %>%
-    xlsx::write.xlsx(file='intersection_posteriors.xlsx', sheetName = nn, append = TRUE, row.names = FALSE, showNA=FALSE)
-}
 saveRDS(object=intersection.fitted.list,file=file.path(output_dir,'intersection.fitted.list.RDS'))
 ```

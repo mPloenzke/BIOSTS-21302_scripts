@@ -1,0 +1,122 @@
+---
+title: "Make Supplemental tables"
+author: "Matt Ploenzke"
+output: html_document
+---
+
+Libraries
+
+```{r}
+library(tidyverse)
+```
+
+Options
+
+```{r}
+results_dir <- '~/Downloads/results'
+output_dir <- '~/Downloads/supplemental_data_tables/'
+dir.create(output_dir, showWarnings = FALSE, recursive=TRUE)
+```
+
+Supplemental tables 1 & 2
+   - CCLE/GDSC intersection posteriors computed within study
+
+```{r}
+input_file <- file.path(results_dir, 'CCLE_GDSC', 'fit_within_study', 'intersection.fitted.list.RDS')
+all_drugs <- readRDS(input_file) %>% 
+   .[['CCLE_GDSC']] %>%
+   as_tibble() %>% 
+   filter((posterior_probability_targeted>.5 & drug_type=='targeted') | (posterior_probability_targeted<=.5 & drug_type=='broad')) %>% 
+   mutate(cell_type = case_when(drug_type == 'broad' ~ 'broad-effect', TRUE ~ cell_type))
+targeted_drugs <- all_drugs %>% 
+   filter(drug_type == 'targeted') 
+broadeffect_drugs <- all_drugs %>% 
+   filter(drug_type == 'broad') %>% 
+   rename(empirical_cdf = posterior_probability_sensitive) %>% 
+   select(-cell_type_likelihood) 
+write_csv(x=targeted_drugs, 
+          file=file.path(output_dir, 'SupplementalTable1.csv'),
+          na='')
+write_csv(x=broadeffect_drugs, 
+          file=file.path(output_dir, 'SupplementalTable2.csv'),
+          na='')
+```
+
+Supplemental tables 3 & 4
+   - CCLE/GDSC1000/CTRPv2/FIMM/gCSI full posteriors computed across study
+
+```{r}
+input_file <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI', 'fit_across_study', 'posterior.formatted.RDS')
+all_drugs <- readRDS(input_file) %>% 
+   as_tibble() %>% 
+   na.omit() %>% 
+   filter((posterior_probability_targeted>.5 & drug_type=='targeted') | (posterior_probability_targeted<=.5 & drug_type=='broad')) %>% 
+   mutate(cell_type = case_when(drug_type == 'broad' ~ 'broad-effect', TRUE ~ cell_type))
+targeted_drugs <- all_drugs %>% 
+   filter(drug_type == 'targeted') 
+broadeffect_drugs <- all_drugs %>% 
+   filter(drug_type == 'broad') %>% 
+   rename(empirical_cdf = posterior_probability_sensitive) %>% 
+   select(-cell_type_likelihood) 
+write_csv(x=targeted_drugs, 
+          file=file.path(output_dir, 'SupplementalTable3.csv'),
+          na='')
+write_csv(x=broadeffect_drugs, 
+          file=file.path(output_dir, 'SupplementalTable4.csv'),
+          na='')
+```
+
+Supplemental table 5
+   - Fusion 
+
+```{r}
+
+```
+
+Supplemental table 6
+   - CCLE/GDSC biomarkers effect sizes
+
+```{r}
+all_effect_sizes <- read_csv(file.path(results_dir,'CCLE_GDSC1000_CTRPv2_FIMM_gCSI','biomarkers','rna.csv')) %>% 
+  filter(Drug=='Crizotinib', symbol!='waterfall')  %>%
+  filter((Dataset=='Joint' & Measure=='Posterior' & Method=='Binarized') | 
+           (Dataset=='Joint' & Measure=='AAC' & Method == 'Binarized')) %>%
+  distinct() %>%
+   select(symbol, Feature, logFC, AveExpr, t, P.Value, adj.P.Val, Measure, PreviouslyAnnotated=isKnown)
+write_csv(x=all_effect_sizes, 
+          file =file.path(output_dir, 'SupplementalTable6.csv'),
+          na='')
+```
+
+Supplemental table 7
+   - CCLE/GDSC1000/CTRPv2/FIMM/gCSI pathway analysis
+
+```{r}
+input_dir <- file.path(results_dir, 'CCLE_GDSC1000_CTRPv2_FIMM_gCSI', 'rna2_pathway_Crizotinib')
+KEGG_tibble <- tibble()
+filles <- list.files(file.path(input_dir))
+for (fi in filles) {
+  if (grepl('KEGG',fi)) { 
+    KEGG_tibble <- read_csv(file.path(input_dir,fi)) %>%
+      as_tibble() %>%
+      mutate(File=fi, Drug='Crizotinib') %>%
+      bind_rows(KEGG_tibble)
+  }
+}
+KEGG_tibble <- KEGG_tibble %>%
+  mutate(File = gsub('KEGG_','',File)) %>%
+  mutate(File = gsub('.csv','',File)) %>%
+  separate(File,  into=c('Measure','Measure2','Dataset'),sep='_',fill='right',remove=TRUE) %>% 
+  select(-Measure2) %>% 
+  mutate(Dataset =  case_when((Dataset=='sensitive' | is.na(Dataset)) ~ 'Joint',
+                              TRUE ~ Dataset)) %>%
+  mutate(Measure = case_when(Measure == 'naive' ~ 'AAC',
+                             Measure == 'posterior'  ~ 'Posterior',
+                             Measure == 'cell'  ~ 'Cell type',
+                             Measure == 'auc' ~ 'Numeric-AAC')) %>% 
+   filter(Measure %in% c("AAC", "Cell type"), Dataset=='Joint') %>% 
+   select(Pathway, N, Up, Down, P.Up, P.Down, Measure) 
+write_csv(x=KEGG_tibble, 
+          file =file.path(output_dir, 'SupplementalTable7.csv'),
+          na='')
+```

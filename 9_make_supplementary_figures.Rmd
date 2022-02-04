@@ -42,7 +42,6 @@ for (comp in names(intersection.fitted.list)) {
     rename(v1 = curr_studies[1], v2 = curr_studies[2]) %>%
     group_by(drug) %>%
     summarise(pearson = cor(v1,v2,method='pearson'),
-              pearson_se = sqrt((1-pearson)/(n()-2)),
               spearman = cor(v1,v2,method='spearman')) %>%
     ungroup()
   twoway_agreement <- pearson %>% 
